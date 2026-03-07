@@ -207,15 +207,41 @@ def get_style_instructions(tone: str, length: str, language: str) -> str:
         "Short & Concise": "Keep your answer brief and to the point. 2-4 sentences max unless bullet points are needed.",
         "Detailed":         "Give a thorough, detailed answer covering all relevant aspects."
     }
-    language_map = {
-        "English":     "Always respond in English.",
-        "Roman Urdu":  "Always respond in Roman Urdu. Roman Urdu means writing Urdu words using English/Latin alphabets — for example: 'Yeh document finance ke baare mein hai'. Do NOT use Urdu script (Arabic letters). Only use Latin/English letters to write Urdu words.",
-        "Arabic":      "Always respond in Arabic script.",
-        "French":      "Always respond in French.",
-        "Spanish":     "Always respond in Spanish.",
-        "German":      "Always respond in German.",
-        "Chinese":     "Always respond in Chinese (Simplified)."
+    def get_style_instructions(tone: str, length: str, language: str) -> str:
+    tone_map = {
+        "Formal":                    "Use formal, professional language. Be precise and structured.",
+        "Simple":                    "Use simple, everyday language. Avoid jargon.",
+        "Bullet Points":             "Always respond using clear bullet points and short sentences.",
+        "ELI5 (Explain Like I'm 5)": "Explain as if talking to a 5-year-old. Use analogies and very simple words."
     }
+    length_map = {
+        "Short & Concise": "Keep your answer brief and to the point. 2-4 sentences max unless bullet points are needed.",
+        "Detailed":         "Give a thorough, detailed answer covering all relevant aspects."
+    }
+    language_map = {
+        "English":    "Always respond in English.",
+        "Roman Urdu": (
+            "CRITICAL INSTRUCTION: You MUST write in Roman Urdu ONLY. "
+            "Roman Urdu = Urdu language but written with English/Latin letters. "
+            "FORBIDDEN: ا ب پ ت ٹ ث ج — ANY Arabic/Urdu script characters are STRICTLY FORBIDDEN. "
+            "ALLOWED: Only a b c d e f g h i j k l m n o p q r s t u v w x y z "
+            "Example of CORRECT output: 'Yeh cheez bohat achi hai, main samajh gaya' "
+            "Example of WRONG output: 'یہ چیز بہت اچھی ہے' "
+            "If you use even ONE Urdu script character, you have failed. "
+            "Write EVERY word using English letters only."
+        ),
+        "Arabic":   "Always respond in Arabic script.",
+        "French":   "Always respond in French.",
+        "Spanish":  "Always respond in Spanish.",
+        "German":   "Always respond in German.",
+        "Chinese":  "Always respond in Chinese (Simplified)."
+    }
+
+    return (
+        f"Tone: {tone_map[tone]}\n"
+        f"Length: {length_map[length]}\n"
+        f"Language: {language_map[language]}"
+    )
     return (
         f"Tone: {tone_map[tone]}\n"
         f"Length: {length_map[length]}\n"
@@ -426,6 +452,7 @@ if user_q:
                     st.write(doc.page_content[:500] + ("..." if len(doc.page_content) > 500 else ""))
             else:
                 st.info("No chunks retrieved — AI answered from its own knowledge.")
+
 
 
 
