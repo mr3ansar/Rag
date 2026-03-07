@@ -125,6 +125,7 @@ def load_llm(api_key, model_name):
         groq_api_key=api_key,
         model_name=model_name
     )
+embeddings = load_embeddings()
 llm = load_llm(api_key, selected_model)
 
 # ── PDF Upload ─────────────────────────────────────────────────────────────────
@@ -436,7 +437,7 @@ if user_q:
         st.chat_message("assistant").write(answer)
         history.add_user_message(user_q)
         history.add_ai_message(answer)
-#Debug Panel
+        #Debug Panel
         with st.expander("🧪 Debug: Rewritten Query & Retrieval"):
             st.write("**Rewritten (standalone) query:**")
             st.code(standalone_q or "(empty)", language="text")
@@ -449,6 +450,7 @@ if user_q:
                     st.write(doc.page_content[:500] + ("..." if len(doc.page_content) > 500 else ""))
             else:
                 st.info("No chunks retrieved — AI answered from its own knowledge.")
+
 
 
 
