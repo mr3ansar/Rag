@@ -21,6 +21,21 @@ with st.sidebar:
     api_key_input = st.text_input("Groq Api Key", type="password")
     st.caption("Upload PDFs To Get Questions Answered from Pdf")
     st.divider()
+    st.subheader("🤖 Model")
+    model_options = {
+        "llama-3.3-70b-versatile  — Best overall":        "llama-3.3-70b-versatile",
+        "mixtral-8x7b-32768       — Long documents":      "mixtral-8x7b-32768",
+        "gemma2-9b-it             — Google model":        "gemma2-9b-it",
+        "llama-3.1-8b-instant     — Fastest responses":   "llama-3.1-8b-instant",
+        "deepseek-r1-distill-llama-70b — Deep reasoning": "deepseek-r1-distill-llama-70b",
+    }
+    selected_model_label = st.selectbox(
+        "Choose model",
+        options=list(model_options.keys()),
+        index=0
+    )
+    selected_model = model_options[selected_model_label]
+    st.divider()
 
     # 🔀 Mode Toggle
     st.subheader("🔀 Answer Mode")
@@ -105,14 +120,12 @@ def load_embeddings():
     )
 
 @st.cache_resource
-def load_llm(api_key):
+def load_llm(api_key, model_name):
     return ChatGroq(
         groq_api_key=api_key,
-        model_name="llama-3.3-70b-versatile"
+        model_name=model_name
     )
-
-embeddings = load_embeddings()
-llm = load_llm(api_key)
+llm = load_llm(api_key, selected_model)
 
 # ── PDF Upload ─────────────────────────────────────────────────────────────────
 uploaded_files = st.file_uploader(
@@ -436,6 +449,7 @@ if user_q:
                     st.write(doc.page_content[:500] + ("..." if len(doc.page_content) > 500 else ""))
             else:
                 st.info("No chunks retrieved — AI answered from its own knowledge.")
+
 
 
 
