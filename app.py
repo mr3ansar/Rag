@@ -207,17 +207,6 @@ def get_style_instructions(tone: str, length: str, language: str) -> str:
         "Short & Concise": "Keep your answer brief and to the point. 2-4 sentences max unless bullet points are needed.",
         "Detailed":         "Give a thorough, detailed answer covering all relevant aspects."
     }
-    def get_style_instructions(tone: str, length: str, language: str) -> str:
-    tone_map = {
-        "Formal":                    "Use formal, professional language. Be precise and structured.",
-        "Simple":                    "Use simple, everyday language. Avoid jargon.",
-        "Bullet Points":             "Always respond using clear bullet points and short sentences.",
-        "ELI5 (Explain Like I'm 5)": "Explain as if talking to a 5-year-old. Use analogies and very simple words."
-    }
-    length_map = {
-        "Short & Concise": "Keep your answer brief and to the point. 2-4 sentences max unless bullet points are needed.",
-        "Detailed":         "Give a thorough, detailed answer covering all relevant aspects."
-    }
     language_map = {
         "English":    "Always respond in English.",
         "Roman Urdu": (
@@ -241,11 +230,6 @@ def get_style_instructions(tone: str, length: str, language: str) -> str:
         f"Tone: {tone_map[tone]}\n"
         f"Length: {length_map[length]}\n"
         f"Language: {language_map[language]}"
-    )
-    return (
-        f"Tone: {tone_map[tone]}\n"
-        f"Length: {length_map[length]}\n"
-        f"Language: Always respond in {language}, regardless of the language of the question."
     )
 
 # ── Prompts ────────────────────────────────────────────────────────────────────
@@ -452,6 +436,7 @@ if user_q:
                     st.write(doc.page_content[:500] + ("..." if len(doc.page_content) > 500 else ""))
             else:
                 st.info("No chunks retrieved — AI answered from its own knowledge.")
+
 
 
 
