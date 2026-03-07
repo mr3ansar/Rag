@@ -21,7 +21,20 @@ with st.sidebar:
 
     api_key_input = st.text_input("Groq Api Key", type="password")
     st.caption("Upload PDFs To Get Questions Answered from Pdf")
+    st.divider()
 
+    # 🔀 Mode Toggle
+    st.subheader("🔀 Answer Mode")
+    mode = st.radio(
+        "How should the AI answer?",
+        options=["🗂️ RAG Only", "🤖 LLM Only", "🔀 RAG + LLM"],
+        index=0,
+        help=(
+            "🗂️ RAG Only — answers strictly from your PDFs\n\n"
+            "🤖 LLM Only — answers from AI's own knowledge (ignores PDFs)\n\n"
+            "🔀 RAG + LLM — tries PDFs first, AI fills gaps if not found"
+        )
+    )
     st.divider()
 
     # 🎭 Tone selector
@@ -205,6 +218,118 @@ qa_prompt = ChatPromptTemplate.from_messages([
     MessagesPlaceholder("chat_history"),
     ("human", "{input}")
 ])
+if user_q:
+    history = get_history(session_id)
+
+    # Show user message immediately
+    st.chat_message("user").write(user_q)
+
+    # ── MODE: LLM Only ─────────────────────────────────────────────────────────
+    if mode == "🤖 LLM Only":
+        style_instructions = get_style_instructions(tone, answer_length, language)
+
+        llm_msgs = llm_only_prompt.format_messages(
+            chat_history=history.messages,
+            input=user_q,
+            style_instructions=style_instructions
+        )
+        answer = llm.invoke(llm_msgs).content
+
+        st.chat_message("assistant").write(answer)
+        history.add_user_message(user_q)
+        history.add_ai_message(answer)
+
+    # ── MODE: RAG Only ─────────────────────────────────────────────────────────
+    elif mode == "🗂️ RAG Only":
+
+        # Step 1: Rewrite question
+        rewrite_msgs = contextualize_q_prompt.format_messages(
+            chat_history=history.messages,
+            input=user_q
+        )
+        standalone_q = llm.invoke(rewrite_msgs).content.strip()
+
+        # Step 2: Retrieve
+        docs = retriever.invoke(standalone_q)
+
+        if not docs:
+            answer = "Out of scope — not found in provided documents."
+            st.chat_message("assistant").write(answer)
+            history.add_user_message(user_q)
+            history.add_ai_message(answer)
+            st.stop()
+
+        # Step 3: Build context + answer
+        context_str = _join_docs(docs)
+        style_instructions = get_style_instructions(tone, answer_length, language)
+
+        qa_msgs = qa_prompt.format_messages(
+            chat_history=history.messages,
+            input=user_q,
+            context=context_str,
+            style_instructions=style_instructions
+        )
+        answer = llm.invoke(qa_msgs).content
+
+        st.chat_message("assistant").write(answer)
+        history.add_user_message(user_q)
+        history.add_ai_message(answer)
+
+        # Debug panels (RAG only)
+        with st.expander("🧪 Debug: Rewritten Query & Retrieval"):
+            st.write("**Rewritten (standalone) query:**")
+            st.code(standalone_q or "(empty)", language="text")
+            st.write(f"**Retrieved {len(docs)} chunk(s).**")
+            st.write(f"**Style:** {tone} | {answer_length} | {language}")
+
+        with st.expander("📑 Retrieved Chunks"):
+            for i, doc in enumerate(docs, 1):
+                st.markdown(f"**{i}. {doc.metadata.get('source_file','Unknown')} (p{doc.metadata.get('page','?')})**")
+                st.write(doc.page_content[:500] + ("..." if len(doc.page_content) > 500 else ""))
+
+    # ── MODE: RAG + LLM Hybrid ─────────────────────────────────────────────────
+    elif mode == "🔀 RAG + LLM":
+
+        # Step 1: Rewrite question
+        rewrite_msgs = contextualize_q_prompt.format_messages(
+            chat_history=history.messages,
+            input=user_q
+        )
+        standalone_q = llm.invoke(rewrite_msgs).content.strip()
+
+        # Step 2: Retrieve (best effort — even empty is ok in hybrid mode)
+        docs = retriever.invoke(standalone_q)
+        context_str = _join_docs(docs) if docs else "No relevant documents found."
+
+        style_instructions = get_style_instructions(tone, answer_length, language)
+
+        # Step 3: Answer using hybrid prompt (AI fills gaps if context is weak)
+        hybrid_msgs = hybrid_prompt.format_messages(
+            chat_history=history.messages,
+            input=user_q,
+            context=context_str,
+            style_instructions=style_instructions
+        )
+        answer = llm.invoke(hybrid_msgs).content
+
+        st.chat_message("assistant").write(answer)
+        history.add_user_message(user_q)
+        history.add_ai_message(answer)
+
+        # Debug panels (Hybrid)
+        with st.expander("🧪 Debug: Rewritten Query & Retrieval"):
+            st.write("**Rewritten (standalone) query:**")
+            st.code(standalone_q or "(empty)", language="text")
+            st.write(f"**Retrieved {len(docs)} chunk(s).**")
+
+        with st.expander("📑 Retrieved Chunks"):
+            if docs:
+                for i, doc in enumerate(docs, 1):
+                    st.markdown(f"**{i}. {doc.metadata.get('source_file','Unknown')} (p{doc.metadata.get('page','?')})**")
+                    st.write(doc.page_content[:500] + ("..." if len(doc.page_content) > 500 else ""))
+            else:
+                st.info("No chunks retrieved — AI answered from its own knowledge.")
+
 
 # ── Session State ──────────────────────────────────────────────────────────────
 if "chat_histories" not in st.session_state:
@@ -325,4 +450,5 @@ if user_q:
         for i, doc in enumerate(docs, 1):
             st.markdown(f"**{i}. {doc.metadata.get('source_file','Unknown')} (p{doc.metadata.get('page','?')})**")
             st.write(doc.page_content[:500] + ("..." if len(doc.page_content) > 500 else ""))
+
 
