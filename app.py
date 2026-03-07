@@ -71,6 +71,23 @@ with st.sidebar:
             st.session_state.chat_histories[session_id] = ChatMessageHistory()
         st.success("Chat cleared!")
         st.rerun()
+    st.divider()
+
+    # 📊 Feedback Summary
+    st.subheader("📊 Feedback Summary")
+    if "feedback" in st.session_state and st.session_state.feedback:
+        thumbs_up   = sum(1 for v in st.session_state.feedback.values() if v == "up")
+        thumbs_down = sum(1 for v in st.session_state.feedback.values() if v == "down")
+        total       = thumbs_up + thumbs_down
+
+        st.metric("👍 Helpful",     thumbs_up)
+        st.metric("👎 Not Helpful", thumbs_down)
+
+        if total > 0:
+            pct = int((thumbs_up / total) * 100)
+            st.progress(pct / 100, text=f"{pct}% positive")
+    else:
+        st.caption("No feedback yet.")
 
 # ── API Key ────────────────────────────────────────────────────────────────────
 api_key = api_key_input or st.secrets.get("GROQ_API_KEY")
@@ -400,3 +417,4 @@ if user_q:
                     st.write(doc.page_content[:500] + ("..." if len(doc.page_content) > 500 else ""))
             else:
                 st.info("No chunks retrieved — AI answered from its own knowledge.")
+
