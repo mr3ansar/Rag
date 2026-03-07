@@ -92,7 +92,7 @@ splits = get_splits(all_docs)
 
 INDEX_DIR = "chroma_index"
 
-
+@st.cache_resources
 def build_vectorstore(splits):
     return Chroma.from_documents(
         splits,
@@ -213,6 +213,7 @@ if user_q:
         for i, doc in enumerate(docs, 1):
             st.markdown(f"**{i}. {doc.metadata.get('source_file','Unknown')} (p{doc.metadata.get('page','?')})**")
             st.write(doc.page_content[:500] + ("..." if len(doc.page_content) > 500 else ""))
+
 
 
 
