@@ -88,6 +88,10 @@ def get_splits(docs):
     return text_splitter.split_documents(docs)
 
 splits = get_splits(all_docs)
+
+# Convert splits (Document objects) to list of page_content
+split_texts = [d.page_content for d in splits]
+
 # Vectorstoring Splits and Embeddings and retrieving
 
 INDEX_DIR = "chroma_index"
@@ -99,8 +103,7 @@ def build_vectorstore(splits):
         embeddings,
         persist_directory=INDEX_DIR
     )
-# Convert splits (Document objects) to list of page_content
-split_texts = [d.page_content for d in splits]
+
 vectorstore = build_vectorstore_from_texts(tuple(split_texts))
 
 retriever = vectorstore.as_retriever(
@@ -216,6 +219,7 @@ if user_q:
         for i, doc in enumerate(docs, 1):
             st.markdown(f"**{i}. {doc.metadata.get('source_file','Unknown')} (p{doc.metadata.get('page','?')})**")
             st.write(doc.page_content[:500] + ("..." if len(doc.page_content) > 500 else ""))
+
 
 
 
