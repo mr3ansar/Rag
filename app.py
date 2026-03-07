@@ -56,7 +56,7 @@ with st.sidebar:
     st.subheader("🌐 Response Language")
     language = st.selectbox(
         "Respond in",
-        ["English", "Urdu", "Arabic", "French", "Spanish", "German", "Chinese"],
+        ["English", "Roman Urdu", "Arabic", "French", "Spanish", "German", "Chinese"],
         index=0
     )
 
@@ -417,4 +417,5 @@ if user_q:
                     st.write(doc.page_content[:500] + ("..." if len(doc.page_content) > 500 else ""))
             else:
                 st.info("No chunks retrieved — AI answered from its own knowledge.")
+
 
