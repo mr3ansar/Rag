@@ -14,8 +14,7 @@ from langchain_chroma import Chroma
 st.set_page_config(page_title="🤖 RAG Chatbot", layout="wide")
 st.title("🔍 RAG Q&A with multiple PDFs + Chat History")
 
-#Making sidebar
-
+# Making sidebar
 with st.sidebar:
     st.header("⚙ Controls")
     api_key_input = st.text_input("Groq Api Key", type="password")
@@ -24,11 +23,10 @@ with st.sidebar:
 api_key = api_key_input or st.secrets.get("GROQ_API_KEY")
 
 if not api_key:
-    st.warning("""Enter your Groq API key to continue(set it up in the .env as "GROQ_API_KEY")""")
+    st.warning('Enter your Groq API key to continue (set GROQ_API_KEY in secrets)')
     st.stop()
 
-# selecting embedding model and LLM
-# ── Models (cached as resources - created only once) ──────────────────────────
+# ── Models (cached - created only once) ───────────────────────────────────────
 
 @st.cache_resource
 def load_embeddings():
@@ -47,33 +45,34 @@ def load_llm(api_key):
 embeddings = load_embeddings()
 llm = load_llm(api_key)
 
-# Uploading multiple pdfs setup
+# ── PDF Upload ─────────────────────────────────────────────────────────────────
 
 uploaded_files = st.file_uploader(
     "📁 Upload pdf Files Here",
     type="pdf",
-    accept_multiple_files = True
+    accept_multiple_files=True
 )
 
 if not uploaded_files:
     st.info("Upload one or more pdfs to continue")
     st.stop()
 
+# ── Store files in session state BEFORE calling build_retriever ───────────────
+st.session_state["uploaded_files"] = uploaded_files
 
-# ── Load + Chunk + Embed (cached by file names+sizes - rebuilds only when 
-#    files actually change) ───────────────────────────────────────────────────
+# ── Load + Chunk + Embed (cached - rebuilds only when files change) ────────────
 
 @st.cache_resource(show_spinner="📄 Processing PDFs...")
 def build_retriever(file_keys: tuple, _embeddings):
     """
-    file_keys is a tuple of (filename, size) pairs.
-    This is the cache key — only rebuilds when files actually change.
-    _embeddings is prefixed with _ so Streamlit skips hashing it.
+    file_keys  → tuple of (filename, size) used as the cache key.
+    _embeddings → prefixed with _ so Streamlit skips hashing it.
+    Rebuilds only when uploaded files actually change.
     """
     all_docs = []
     tmp_paths = []
 
-    # Get the uploaded files from session state
+    # Step 1: Load PDFs from session state
     for pdf in st.session_state["uploaded_files"]:
         tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
         tmp.write(pdf.getvalue())
@@ -86,55 +85,47 @@ def build_retriever(file_keys: tuple, _embeddings):
             d.metadata["source_file"] = pdf.name
         all_docs.extend(docs)
 
-st.success(f"✅ Loaded {len(all_docs)} pages from {len(uploaded_files)} PDFs")
+    # Step 2: Clean up temp files
+    for p in tmp_paths:
+        try:
+            os.unlink(p)
+        except Exception:
+            pass
 
-# Clean up temp files
+    # Step 3: Chunk the documents
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=1200,
+        chunk_overlap=120
+    )
+    splits = text_splitter.split_documents(all_docs)  # ✅ consistent variable name
 
-for p in tmp_paths:
-    try:
-        os.unlink(p)
-    except Exception:
-        pass
-
-# Making Chunks
-
-text_splitter = RecursiveCharacterTextSplitter(
-    chunk_size = 1200,
-    chunk_overlap = 120
-)
-
-
-splits = splitter.split_documents(all_docs)
-
-# Vectorstoring Splits and Embeddings and retrieving
-
-# Build vectorstore
-vectorstore = Chroma.from_documents(
+    # Step 4: Build vectorstore
+    vectorstore = Chroma.from_documents(
         splits,
         _embeddings,
         persist_directory="chroma_index"
     )
 
-retriever = vectorstore.as_retriever(
+    # Step 5: Build retriever
+    retriever = vectorstore.as_retriever(
         search_type="mmr",
         search_kwargs={"k": 5, "fetch_k": 20}
     )
 
-    return retriever, len(all_docs), len(splits)
-# Store uploaded files in session state so the cached function can access them
-st.session_state["uploaded_files"] = uploaded_files
+    return retriever, len(all_docs), len(splits)  # ✅ inside the function
 
-# Build cache key from filenames + sizes (not the file objects themselves)
+# ── Build cache key and call the function ─────────────────────────────────────
+
 file_keys = tuple((f.name, f.size) for f in uploaded_files)
-
 retriever, total_pages, total_chunks = build_retriever(file_keys, embeddings)
 
+# ✅ Use return values from the function, not variables from inside it
 st.success(f"✅ Loaded {total_pages} pages | {total_chunks} chunks indexed")
 st.sidebar.write(f"🔎 Indexed {total_chunks} chunks for retrieval")
 
-# Helper: format docs for stuffing
+# ── Helper ─────────────────────────────────────────────────────────────────────
 
-def _join_docs(docs, max_chars = 7000):
+def _join_docs(docs, max_chars=7000):
     chunks, total = [], 0
     for d in docs:
         piece = d.page_content + "\n\n"
@@ -144,7 +135,7 @@ def _join_docs(docs, max_chars = 7000):
         total += len(piece)
     return "\n\n---\n\n".join(chunks)
 
-# Prompts
+# ── Prompts ────────────────────────────────────────────────────────────────────
 
 contextualize_q_prompt = ChatPromptTemplate.from_messages([
     ("system",
@@ -153,21 +144,21 @@ contextualize_q_prompt = ChatPromptTemplate.from_messages([
      "Use the chat history for context. "
      "Return ONLY the rewritten query."),
     MessagesPlaceholder("chat_history"),
-     ("human", "{input}")
+    ("human", "{input}")
 ])
 
 qa_prompt = ChatPromptTemplate.from_messages([
     ("system",
-     "You are a STRICT RAG assistant. You must answer using only the provided context \n"
+     "You are a STRICT RAG assistant. Answer using ONLY the provided context.\n"
      "If the context does NOT contain the answer, reply exactly:\n"
      "'Out of scope - not found in provided documents.'\n"
-     "Do NOT use outside knowledge. \n\n"
+     "Do NOT use outside knowledge.\n\n"
      "Context:\n{context}"),
-     MessagesPlaceholder("chat_history"),
-     ("human","{input}")
+    MessagesPlaceholder("chat_history"),
+    ("human", "{input}")
 ])
 
-#session stae for chat history
+# ── Session State for Chat History ────────────────────────────────────────────
 
 if "chat_histories" not in st.session_state:
     st.session_state.chat_histories = {}
@@ -176,6 +167,7 @@ def get_history(session_id):
     if session_id not in st.session_state.chat_histories:
         st.session_state.chat_histories[session_id] = ChatMessageHistory()
     return st.session_state.chat_histories[session_id]
+
 # ── Chat UI ────────────────────────────────────────────────────────────────────
 
 session_id = st.text_input("🆔 Session ID", value="default_session")
@@ -236,19 +228,3 @@ if user_q:
         for i, doc in enumerate(docs, 1):
             st.markdown(f"**{i}. {doc.metadata.get('source_file','Unknown')} (p{doc.metadata.get('page','?')})**")
             st.write(doc.page_content[:500] + ("..." if len(doc.page_content) > 500 else ""))
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
