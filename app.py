@@ -405,7 +405,8 @@ if user_q:
     style_instructions = get_style_instructions(tone, answer_length, language)
     st.chat_message("user").write(user_q)
 
-    # MODE: LLM Only
+    # ── MODE: LLM Only ─────────────────────────────────────────────────────────
+    if mode == "🤖 LLM Only":                          
         fallback = (
             f"Answer this question using your own knowledge.\n"
             f"{style_instructions}\n\n"
@@ -423,7 +424,7 @@ if user_q:
         history.add_user_message(user_q)
         history.add_ai_message(answer)
 
-    # MODE: RAG Only
+    # ── MODE: RAG Only ─────────────────────────────────────────────────────────
     elif mode == "🗂️ RAG Only":
         standalone_q = rewrite_question(user_q, history, selected_model)
         docs         = retriever.invoke(standalone_q)
@@ -468,7 +469,7 @@ if user_q:
                 st.markdown(f"**{i}. {doc.metadata.get('source_file','Unknown')} (p{doc.metadata.get('page','?')})**")
                 st.write(doc.page_content[:500] + ("..." if len(doc.page_content) > 500 else ""))
 
-    # MODE: RAG + LLM Hybrid
+    # ── MODE: RAG + LLM Hybrid ─────────────────────────────────────────────────
     elif mode == "🔀 RAG + LLM":
         standalone_q = rewrite_question(user_q, history, selected_model)
         docs         = retriever.invoke(standalone_q)
@@ -493,7 +494,7 @@ if user_q:
         st.chat_message("assistant").write(answer)
         history.add_user_message(user_q)
         history.add_ai_message(answer)
-
+        #Debug Panel
         with st.expander("🧪 Debug: Rewritten Query & Retrieval"):
             st.write("**Rewritten (standalone) query:**")
             st.code(standalone_q or "(empty)", language="text")
@@ -507,3 +508,4 @@ if user_q:
                     st.write(doc.page_content[:500] + ("..." if len(doc.page_content) > 500 else ""))
             else:
                 st.info("No chunks retrieved — AI answered from its own knowledge.")
+
