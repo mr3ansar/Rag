@@ -1,33 +1,36 @@
-## importing libraries
+# importing libraries
 import os 
 import tempfile
 import streamlit as st
 from datetime import datetime
 from langchain_groq import ChatGroq
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.messages import HumanMessage
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_community.chat_message_histories import ChatMessageHistory
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
 
-## Page setup
+# Page setup
 st.set_page_config(page_title="🤖 RAG Chatbot", layout="wide")
 st.title("🔍 RAG Q&A with multiple PDFs + Chat History")
 
-# ── Sidebar ────────────────────────────────────────────────────────────────────
+# Sidebar
 with st.sidebar:
     st.header("⚙ Controls")
     api_key_input = st.text_input("Groq Api Key", type="password")
     st.caption("Upload PDFs To Get Questions Answered from Pdf")
     st.divider()
+
+    # 🤖 Model selector
     st.subheader("🤖 Model")
     model_options = {
-        "llama-3.3-70b-versatile  — Best overall":        "llama-3.3-70b-versatile",
-        "mixtral-8x7b-32768       — Long documents":      "mixtral-8x7b-32768",
-        "gemma2-9b-it             — Google model":        "gemma2-9b-it",
-        "llama-3.1-8b-instant     — Fastest responses":   "llama-3.1-8b-instant",
-        "deepseek-r1-distill-llama-70b — Deep reasoning": "deepseek-r1-distill-llama-70b",
+        "llama-3.3-70b-versatile       — Best overall":      "llama-3.3-70b-versatile",
+        "mixtral-8x7b-32768            — Long documents":    "mixtral-8x7b-32768",
+        "gemma2-9b-it                  — Google model":      "gemma2-9b-it",
+        "llama-3.1-8b-instant          — Fastest responses": "llama-3.1-8b-instant",
+        "deepseek-r1-distill-llama-70b — Deep reasoning":    "deepseek-r1-distill-llama-70b",
     }
     selected_model_label = st.selectbox(
         "Choose model",
@@ -74,7 +77,6 @@ with st.sidebar:
         ["English", "Roman Urdu", "Arabic", "French", "Spanish", "German", "Chinese"],
         index=0
     )
-
     st.divider()
 
     # 🗑️ Clear Chat + Session ID
@@ -94,24 +96,22 @@ with st.sidebar:
         thumbs_up   = sum(1 for v in st.session_state.feedback.values() if v == "up")
         thumbs_down = sum(1 for v in st.session_state.feedback.values() if v == "down")
         total       = thumbs_up + thumbs_down
-
         st.metric("👍 Helpful",     thumbs_up)
         st.metric("👎 Not Helpful", thumbs_down)
-
         if total > 0:
             pct = int((thumbs_up / total) * 100)
             st.progress(pct / 100, text=f"{pct}% positive")
     else:
         st.caption("No feedback yet.")
 
-# ── API Key ────────────────────────────────────────────────────────────────────
+# API Key
 api_key = api_key_input or st.secrets.get("GROQ_API_KEY")
 
 if not api_key:
     st.warning('Enter your Groq API key to continue')
     st.stop()
 
-# ── Models (cached - created only once) ───────────────────────────────────────
+# Models (cached - created only once per unique combination) 
 @st.cache_resource
 def load_embeddings():
     return HuggingFaceEmbeddings(
@@ -125,10 +125,14 @@ def load_llm(api_key, model_name):
         groq_api_key=api_key,
         model_name=model_name
     )
-embeddings = load_embeddings()
-llm = load_llm(api_key, selected_model)
 
-# ── PDF Upload ─────────────────────────────────────────────────────────────────
+embeddings     = load_embeddings()
+llm            = load_llm(api_key, selected_model)
+
+# Models that do NOT support system messages
+NO_SYSTEM_MODELS = ["deepseek-r1-distill-llama-70b", "gemma2-9b-it"]
+
+# PDF Upload
 uploaded_files = st.file_uploader(
     "📁 Upload pdf Files Here",
     type="pdf",
@@ -149,10 +153,10 @@ if not uploaded_files:
 # Store files BEFORE calling build_retriever
 st.session_state["uploaded_files"] = uploaded_files
 
-# ── Build Retriever (cached - rebuilds only when files change) ─────────────────
+# Build Retriever (cached - rebuilds only when files change)
 @st.cache_resource(show_spinner="📄 Processing PDFs...")
 def build_retriever(file_keys: tuple, _embeddings):
-    all_docs = []
+    all_docs  = []
     tmp_paths = []
 
     for pdf in st.session_state["uploaded_files"]:
@@ -162,7 +166,7 @@ def build_retriever(file_keys: tuple, _embeddings):
         tmp_paths.append(tmp.name)
 
         loader = PyPDFLoader(tmp.name)
-        docs = loader.load()
+        docs   = loader.load()
         for d in docs:
             d.metadata["source_file"] = pdf.name
         all_docs.extend(docs)
@@ -192,13 +196,13 @@ def build_retriever(file_keys: tuple, _embeddings):
 
     return retriever, len(all_docs), len(splits)
 
-file_keys = tuple((f.name, f.size) for f in uploaded_files)
+file_keys                            = tuple((f.name, f.size) for f in uploaded_files)
 retriever, total_pages, total_chunks = build_retriever(file_keys, embeddings)
 
 st.success(f"✅ Loaded {total_pages} pages | {total_chunks} chunks indexed")
 st.sidebar.write(f"🔎 Indexed {total_chunks} chunks for retrieval")
 
-# ── Helper: join docs ──────────────────────────────────────────────────────────
+# Helper: join docs
 def _join_docs(docs, max_chars=7000):
     chunks, total = [], 0
     for d in docs:
@@ -209,7 +213,7 @@ def _join_docs(docs, max_chars=7000):
         total += len(piece)
     return "\n\n---\n\n".join(chunks)
 
-# ── Helper: style instructions ─────────────────────────────────────────────────
+# Helper: style instructions
 def get_style_instructions(tone: str, length: str, language: str) -> str:
     tone_map = {
         "Formal":                    "Use formal, professional language. Be precise and structured.",
@@ -219,7 +223,7 @@ def get_style_instructions(tone: str, length: str, language: str) -> str:
     }
     length_map = {
         "Short & Concise": "Keep your answer brief and to the point. 2-4 sentences max unless bullet points are needed.",
-        "Detailed":         "Give a thorough, detailed answer covering all relevant aspects."
+        "Detailed":        "Give a thorough, detailed answer covering all relevant aspects."
     }
     language_map = {
         "English":    "Always respond in English.",
@@ -233,20 +237,49 @@ def get_style_instructions(tone: str, length: str, language: str) -> str:
             "If you use even ONE Urdu script character, you have failed. "
             "Write EVERY word using English letters only."
         ),
-        "Arabic":   "Always respond in Arabic script.",
-        "French":   "Always respond in French.",
-        "Spanish":  "Always respond in Spanish.",
-        "German":   "Always respond in German.",
-        "Chinese":  "Always respond in Chinese (Simplified)."
+        "Arabic":  "Always respond in Arabic script.",
+        "French":  "Always respond in French.",
+        "Spanish": "Always respond in Spanish.",
+        "German":  "Always respond in German.",
+        "Chinese": "Always respond in Chinese (Simplified)."
     }
-
     return (
         f"Tone: {tone_map[tone]}\n"
         f"Length: {length_map[length]}\n"
         f"Language: {language_map[language]}"
     )
 
-# ── Prompts ────────────────────────────────────────────────────────────────────
+# Helper: safe rewrite (handles models that don't support system messages)
+def rewrite_question(user_q: str, history, model_name: str) -> str:
+    if model_name in NO_SYSTEM_MODELS:
+        # Flatten full conversation into a single human message
+        history_text = ""
+        for msg in history.messages:
+            role = "User" if msg.type == "human" else "Assistant"
+            history_text += f"{role}: {msg.content}\n"
+
+        flat_prompt = (
+            f"Given this conversation history:\n{history_text}\n"
+            f"Rewrite this question into a standalone search query: '{user_q}'\n"
+            f"Return ONLY the rewritten query, nothing else."
+        )
+        return llm.invoke([HumanMessage(content=flat_prompt)]).content.strip()
+    else:
+        rewrite_msgs = contextualize_q_prompt.format_messages(
+            chat_history=history.messages,
+            input=user_q
+        )
+        return llm.invoke(rewrite_msgs).content.strip()
+
+# ── Helper: safe LLM invoke (handles models that don't support system messages) ─
+def safe_llm_invoke(prompt_template, model_name: str, fallback_text: str, **kwargs) -> str:
+    if model_name in NO_SYSTEM_MODELS:
+        return llm.invoke([HumanMessage(content=fallback_text)]).content
+    else:
+        msgs = prompt_template.format_messages(**kwargs)
+        return llm.invoke(msgs).content
+
+# Prompts
 contextualize_q_prompt = ChatPromptTemplate.from_messages([
     ("system",
      "Rewrite the user's latest question into a standalone search query "
@@ -292,28 +325,28 @@ hybrid_prompt = ChatPromptTemplate.from_messages([
     ("human", "{input}")
 ])
 
-# ── Session State ──────────────────────────────────────────────────────────────
-# ✅ MUST be defined BEFORE get_history() is called
+# Session State
 if "chat_histories" not in st.session_state:
     st.session_state.chat_histories = {}
 
 if "feedback" not in st.session_state:
     st.session_state.feedback = {}
 
-def get_history(session_id):
+def get_history(session_id: str):
     if session_id not in st.session_state.chat_histories:
         st.session_state.chat_histories[session_id] = ChatMessageHistory()
     return st.session_state.chat_histories[session_id]
 
-# ── Chat UI ────────────────────────────────────────────────────────────────────
-# ✅ MUST be defined BEFORE the if user_q: block
+# Chat UI
 history = get_history(session_id)
 
-# ── Chat export ────────────────────────────────────────────────────────────────
-def build_export_text(history, session_id):
-    lines = [f"Chat Export — Session: {session_id}",
-             f"Exported: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-             "=" * 50, ""]
+# Chat export
+def build_export_text(history, session_id: str) -> str:
+    lines = [
+        f"Chat Export — Session: {session_id}",
+        f"Exported: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        "=" * 50, ""
+    ]
     for msg in history.messages:
         role = "You" if msg.type == "human" else "Assistant"
         lines.append(f"[{role}]\n{msg.content}\n")
@@ -328,7 +361,7 @@ if history.messages:
         mime="text/plain"
     )
 
-# ── Render previous messages with feedback buttons ─────────────────────────────
+# Render previous messages with feedback buttons
 ai_msg_index = 0
 
 for msg in history.messages:
@@ -337,7 +370,7 @@ for msg in history.messages:
 
     if msg.type == "ai":
         col1, col2, col3 = st.columns([1, 1, 10])
-        fb_key = f"{session_id}_{ai_msg_index}"
+        fb_key     = f"{session_id}_{ai_msg_index}"
         current_fb = st.session_state.feedback.get(fb_key)
 
         with col1:
@@ -354,36 +387,39 @@ for msg in history.messages:
                 st.rerun()
         ai_msg_index += 1
 
-# ── Chat input ─────────────────────────────────────────────────────────────────
-# ✅ user_q defined here, BEFORE the if user_q: block
+# Chat input
 user_q = st.chat_input("Ask a question....")
 
-# ── Chat Pipeline (single clean block, no duplicates) ─────────────────────────
+# Chat Pipeline
 if user_q:
     history = get_history(session_id)
+    style_instructions = get_style_instructions(tone, answer_length, language)
     st.chat_message("user").write(user_q)
 
-    # ── MODE: LLM Only ─────────────────────────────────────────────────────────
+    # MODE: LLM Only
     if mode == "🤖 LLM Only":
-        style_instructions = get_style_instructions(tone, answer_length, language)
-        llm_msgs = llm_only_prompt.format_messages(
+        # Build fallback flat prompt for no-system models
+        fallback = (
+            f"Answer this question using your own knowledge.\n"
+            f"{style_instructions}\n\n"
+            f"Question: {user_q}"
+        )
+        answer = safe_llm_invoke(
+            llm_only_prompt,
+            selected_model,
+            fallback,
             chat_history=history.messages,
             input=user_q,
             style_instructions=style_instructions
         )
-        answer = llm.invoke(llm_msgs).content
         st.chat_message("assistant").write(answer)
         history.add_user_message(user_q)
         history.add_ai_message(answer)
 
-    # ── MODE: RAG Only ─────────────────────────────────────────────────────────
+    # MODE: RAG Only
     elif mode == "🗂️ RAG Only":
-        rewrite_msgs = contextualize_q_prompt.format_messages(
-            chat_history=history.messages,
-            input=user_q
-        )
-        standalone_q = llm.invoke(rewrite_msgs).content.strip()
-        docs = retriever.invoke(standalone_q)
+        standalone_q = rewrite_question(user_q, history, selected_model)
+        docs         = retriever.invoke(standalone_q)
 
         if not docs:
             answer = "Out of scope — not found in provided documents."
@@ -393,14 +429,22 @@ if user_q:
             st.stop()
 
         context_str = _join_docs(docs)
-        style_instructions = get_style_instructions(tone, answer_length, language)
-        qa_msgs = qa_prompt.format_messages(
+        fallback = (
+            f"Answer using ONLY this context. "
+            f"If not found say 'Out of scope'.\n"
+            f"{style_instructions}\n\n"
+            f"Context:\n{context_str}\n\n"
+            f"Question: {user_q}"
+        )
+        answer = safe_llm_invoke(
+            qa_prompt,
+            selected_model,
+            fallback,
             chat_history=history.messages,
             input=user_q,
             context=context_str,
             style_instructions=style_instructions
         )
-        answer = llm.invoke(qa_msgs).content
         st.chat_message("assistant").write(answer)
         history.add_user_message(user_q)
         history.add_ai_message(answer)
@@ -409,6 +453,7 @@ if user_q:
             st.write("**Rewritten (standalone) query:**")
             st.code(standalone_q or "(empty)", language="text")
             st.write(f"**Retrieved {len(docs)} chunk(s).**")
+            st.write(f"**Model:** {selected_model}")
             st.write(f"**Style:** {tone} | {answer_length} | {language}")
 
         with st.expander("📑 Retrieved Chunks"):
@@ -416,24 +461,28 @@ if user_q:
                 st.markdown(f"**{i}. {doc.metadata.get('source_file','Unknown')} (p{doc.metadata.get('page','?')})**")
                 st.write(doc.page_content[:500] + ("..." if len(doc.page_content) > 500 else ""))
 
-    # ── MODE: RAG + LLM Hybrid ─────────────────────────────────────────────────
+    # MODE: RAG + LLM Hybrid
     elif mode == "🔀 RAG + LLM":
-        rewrite_msgs = contextualize_q_prompt.format_messages(
-            chat_history=history.messages,
-            input=user_q
-        )
-        standalone_q = llm.invoke(rewrite_msgs).content.strip()
-        docs = retriever.invoke(standalone_q)
-        context_str = _join_docs(docs) if docs else "No relevant documents found."
-        style_instructions = get_style_instructions(tone, answer_length, language)
+        standalone_q = rewrite_question(user_q, history, selected_model)
+        docs         = retriever.invoke(standalone_q)
+        context_str  = _join_docs(docs) if docs else "No relevant documents found."
 
-        hybrid_msgs = hybrid_prompt.format_messages(
+        fallback = (
+            f"Answer using the context below. If context is weak, use your own knowledge "
+            f"and label it '🧠 From AI knowledge:'.\n"
+            f"{style_instructions}\n\n"
+            f"Context:\n{context_str}\n\n"
+            f"Question: {user_q}"
+        )
+        answer = safe_llm_invoke(
+            hybrid_prompt,
+            selected_model,
+            fallback,
             chat_history=history.messages,
             input=user_q,
             context=context_str,
             style_instructions=style_instructions
         )
-        answer = llm.invoke(hybrid_msgs).content
         st.chat_message("assistant").write(answer)
         history.add_user_message(user_q)
         history.add_ai_message(answer)
@@ -442,6 +491,7 @@ if user_q:
             st.write("**Rewritten (standalone) query:**")
             st.code(standalone_q or "(empty)", language="text")
             st.write(f"**Retrieved {len(docs)} chunk(s).**")
+            st.write(f"**Model:** {selected_model}")
 
         with st.expander("📑 Retrieved Chunks"):
             if docs:
@@ -450,11 +500,3 @@ if user_q:
                     st.write(doc.page_content[:500] + ("..." if len(doc.page_content) > 500 else ""))
             else:
                 st.info("No chunks retrieved — AI answered from its own knowledge.")
-
-
-
-
-
-
-
-
