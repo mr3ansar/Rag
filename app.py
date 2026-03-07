@@ -116,7 +116,7 @@ def _join_docs(docs, max_chars = 7000):
 
 # Prompts
 
-contextualize_q_prompt = ChatPromptTemplate.from_message([
+contextualize_q_prompt = ChatPromptTemplate.from_messages([
     ("system",
      "Rewrite the user's latest question into a standalone search query using the chat history for the context."
      "Return only the rewritten query, no extra text."),
@@ -198,5 +198,6 @@ if user_q:
         for i, doc in enumerate(docs, 1):
             st.markdown(f"**{i}. {doc.metadata.get('source_file','Unknown')} (p{doc.metadata.get('page','?')})**")
             st.write(doc.page_content[:500] + ("..." if len(doc.page_content) > 500 else ""))
+
 
 
