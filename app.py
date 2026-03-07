@@ -87,13 +87,17 @@ splits = text_splitter.split_documents(all_docs)
 
 # Vectorstoring Splits and Embeddings and retrieving
 
-INDEX_DIR = "chorma_index"
+INDEX_DIR = "chroma_index"
 
-vectorstore = Chroma.from_documents(
-    splits,
-    embeddings,
-    persist_directory = INDEX_DIR
+@st.cache_resource
+def build_vectorstore(splits):
+    return Chroma.from_documents(
+        splits,
+        embeddings,
+        persist_directory=INDEX_DIR
 )
+
+vectorstore = build_vectorstore(splits)
 
 retriever = vectorstore.as_retriever(
     search_type = "mmr",
@@ -137,19 +141,27 @@ qa_prompt = ChatPromptTemplate.from_messages([
 
 #session stae for chat history
 
-if "chathistory" not in st.session_state:
-    st.session_state.chathistory = {}
+if "chat_histories" not in st.session_state:
+    st.session_state.chat_histories = {}
 
-def get_history(session_id: str):
-    if session_id not in st.session_state.chathistory:
-        st.session_state.chathistory[session_id] = ChatMessageHistory()
-    return st.session_state.chathistory[session_id]
-
+def get_history(session_id):
+    if session_id not in st.session_state.chat_histories:
+        st.session_state.chat_histories[session_id] = ChatMessageHistory()
+    return st.session_state.chat_histories[session_id]
 #chat ui
 
 session_id = st.text_input(" 🆔 Session ID ", value="default_session")
-user_q = st.chat_input("Ask a question....")
 
+history = get_history(session_id)
+
+# Show previous chat messages
+for msg in history.messages:
+    if msg.type == "human":
+        st.chat_message("user").write(msg.content)
+    else:
+        st.chat_message("assistant").write(msg.content)
+
+user_q = st.chat_input("Ask a question....")
 # ── Session state for chat history here
 
 if user_q:
@@ -198,6 +210,7 @@ if user_q:
         for i, doc in enumerate(docs, 1):
             st.markdown(f"**{i}. {doc.metadata.get('source_file','Unknown')} (p{doc.metadata.get('page','?')})**")
             st.write(doc.page_content[:500] + ("..." if len(doc.page_content) > 500 else ""))
+
 
 
 
