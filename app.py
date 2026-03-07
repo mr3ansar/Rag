@@ -252,4 +252,151 @@ if "feedback" not in st.session_state:
 
 def get_history(session_id):
     if session_id not in st.session_state.chat_histories:
-        st.session_state.chat_histories[s
+        st.session_state.chat_histories[session_id] = ChatMessageHistory()
+    return st.session_state.chat_histories[session_id]
+
+# ── Chat UI ────────────────────────────────────────────────────────────────────
+# ✅ MUST be defined BEFORE the if user_q: block
+history = get_history(session_id)
+
+# ── Chat export ────────────────────────────────────────────────────────────────
+def build_export_text(history, session_id):
+    lines = [f"Chat Export — Session: {session_id}",
+             f"Exported: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+             "=" * 50, ""]
+    for msg in history.messages:
+        role = "You" if msg.type == "human" else "Assistant"
+        lines.append(f"[{role}]\n{msg.content}\n")
+    return "\n".join(lines)
+
+if history.messages:
+    export_text = build_export_text(history, session_id)
+    st.download_button(
+        label="📥 Export Chat (.txt)",
+        data=export_text,
+        file_name=f"chat_{session_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+        mime="text/plain"
+    )
+
+# ── Render previous messages with feedback buttons ─────────────────────────────
+ai_msg_index = 0
+
+for msg in history.messages:
+    role = "user" if msg.type == "human" else "assistant"
+    st.chat_message(role).write(msg.content)
+
+    if msg.type == "ai":
+        col1, col2, col3 = st.columns([1, 1, 10])
+        fb_key = f"{session_id}_{ai_msg_index}"
+        current_fb = st.session_state.feedback.get(fb_key)
+
+        with col1:
+            if st.button("👍", key=f"up_{fb_key}",
+                         help="Good answer",
+                         type="primary" if current_fb == "up" else "secondary"):
+                st.session_state.feedback[fb_key] = "up"
+                st.rerun()
+        with col2:
+            if st.button("👎", key=f"down_{fb_key}",
+                         help="Bad answer",
+                         type="primary" if current_fb == "down" else "secondary"):
+                st.session_state.feedback[fb_key] = "down"
+                st.rerun()
+        ai_msg_index += 1
+
+# ── Chat input ─────────────────────────────────────────────────────────────────
+# ✅ user_q defined here, BEFORE the if user_q: block
+user_q = st.chat_input("Ask a question....")
+
+# ── Chat Pipeline (single clean block, no duplicates) ─────────────────────────
+if user_q:
+    history = get_history(session_id)
+    st.chat_message("user").write(user_q)
+
+    # ── MODE: LLM Only ─────────────────────────────────────────────────────────
+    if mode == "🤖 LLM Only":
+        style_instructions = get_style_instructions(tone, answer_length, language)
+        llm_msgs = llm_only_prompt.format_messages(
+            chat_history=history.messages,
+            input=user_q,
+            style_instructions=style_instructions
+        )
+        answer = llm.invoke(llm_msgs).content
+        st.chat_message("assistant").write(answer)
+        history.add_user_message(user_q)
+        history.add_ai_message(answer)
+
+    # ── MODE: RAG Only ─────────────────────────────────────────────────────────
+    elif mode == "🗂️ RAG Only":
+        rewrite_msgs = contextualize_q_prompt.format_messages(
+            chat_history=history.messages,
+            input=user_q
+        )
+        standalone_q = llm.invoke(rewrite_msgs).content.strip()
+        docs = retriever.invoke(standalone_q)
+
+        if not docs:
+            answer = "Out of scope — not found in provided documents."
+            st.chat_message("assistant").write(answer)
+            history.add_user_message(user_q)
+            history.add_ai_message(answer)
+            st.stop()
+
+        context_str = _join_docs(docs)
+        style_instructions = get_style_instructions(tone, answer_length, language)
+        qa_msgs = qa_prompt.format_messages(
+            chat_history=history.messages,
+            input=user_q,
+            context=context_str,
+            style_instructions=style_instructions
+        )
+        answer = llm.invoke(qa_msgs).content
+        st.chat_message("assistant").write(answer)
+        history.add_user_message(user_q)
+        history.add_ai_message(answer)
+
+        with st.expander("🧪 Debug: Rewritten Query & Retrieval"):
+            st.write("**Rewritten (standalone) query:**")
+            st.code(standalone_q or "(empty)", language="text")
+            st.write(f"**Retrieved {len(docs)} chunk(s).**")
+            st.write(f"**Style:** {tone} | {answer_length} | {language}")
+
+        with st.expander("📑 Retrieved Chunks"):
+            for i, doc in enumerate(docs, 1):
+                st.markdown(f"**{i}. {doc.metadata.get('source_file','Unknown')} (p{doc.metadata.get('page','?')})**")
+                st.write(doc.page_content[:500] + ("..." if len(doc.page_content) > 500 else ""))
+
+    # ── MODE: RAG + LLM Hybrid ─────────────────────────────────────────────────
+    elif mode == "🔀 RAG + LLM":
+        rewrite_msgs = contextualize_q_prompt.format_messages(
+            chat_history=history.messages,
+            input=user_q
+        )
+        standalone_q = llm.invoke(rewrite_msgs).content.strip()
+        docs = retriever.invoke(standalone_q)
+        context_str = _join_docs(docs) if docs else "No relevant documents found."
+        style_instructions = get_style_instructions(tone, answer_length, language)
+
+        hybrid_msgs = hybrid_prompt.format_messages(
+            chat_history=history.messages,
+            input=user_q,
+            context=context_str,
+            style_instructions=style_instructions
+        )
+        answer = llm.invoke(hybrid_msgs).content
+        st.chat_message("assistant").write(answer)
+        history.add_user_message(user_q)
+        history.add_ai_message(answer)
+#Debug Panel
+        with st.expander("🧪 Debug: Rewritten Query & Retrieval"):
+            st.write("**Rewritten (standalone) query:**")
+            st.code(standalone_q or "(empty)", language="text")
+            st.write(f"**Retrieved {len(docs)} chunk(s).**")
+
+        with st.expander("📑 Retrieved Chunks"):
+            if docs:
+                for i, doc in enumerate(docs, 1):
+                    st.markdown(f"**{i}. {doc.metadata.get('source_file','Unknown')} (p{doc.metadata.get('page','?')})**")
+                    st.write(doc.page_content[:500] + ("..." if len(doc.page_content) > 500 else ""))
+            else:
+                st.info("No chunks retrieved — AI answered from its own knowledge.")
