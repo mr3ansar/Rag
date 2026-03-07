@@ -109,7 +109,7 @@ splits = splitter.split_documents(all_docs)
 # Vectorstoring Splits and Embeddings and retrieving
 
 # Build vectorstore
-    vectorstore = Chroma.from_documents(
+vectorstore = Chroma.from_documents(
         splits,
         _embeddings,
         persist_directory="chroma_index"
@@ -236,6 +236,7 @@ if user_q:
         for i, doc in enumerate(docs, 1):
             st.markdown(f"**{i}. {doc.metadata.get('source_file','Unknown')} (p{doc.metadata.get('page','?')})**")
             st.write(doc.page_content[:500] + ("..." if len(doc.page_content) > 500 else ""))
+
 
 
 
