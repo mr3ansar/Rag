@@ -115,12 +115,12 @@ vectorstore = Chroma.from_documents(
         persist_directory="chroma_index"
     )
 
-    retriever = vectorstore.as_retriever(
+retriever = vectorstore.as_retriever(
         search_type="mmr",
         search_kwargs={"k": 5, "fetch_k": 20}
     )
 
-    return retriever, len(all_docs), len(splits)
+return retriever, len(all_docs), len(splits)
 # Store uploaded files in session state so the cached function can access them
 st.session_state["uploaded_files"] = uploaded_files
 
@@ -236,6 +236,7 @@ if user_q:
         for i, doc in enumerate(docs, 1):
             st.markdown(f"**{i}. {doc.metadata.get('source_file','Unknown')} (p{doc.metadata.get('page','?')})**")
             st.write(doc.page_content[:500] + ("..." if len(doc.page_content) > 500 else ""))
+
 
 
 
