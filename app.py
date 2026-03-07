@@ -218,6 +218,30 @@ qa_prompt = ChatPromptTemplate.from_messages([
     MessagesPlaceholder("chat_history"),
     ("human", "{input}")
 ])
+# ── LLM Only Prompt (no context, no retrieval) ────────────────────────────────
+llm_only_prompt = ChatPromptTemplate.from_messages([
+    ("system",
+     "You are a helpful AI assistant. Answer the user's question using your own knowledge.\n"
+     "Be honest if you are unsure about something.\n\n"
+     "{style_instructions}"),
+    MessagesPlaceholder("chat_history"),
+    ("human", "{input}")
+])
+
+# ── RAG + LLM Hybrid Prompt (context provided but AI can go beyond it) ─────────
+hybrid_prompt = ChatPromptTemplate.from_messages([
+    ("system",
+     "You are a helpful RAG assistant. "
+     "First try to answer using the provided context from the user's documents.\n"
+     "If the context does not fully answer the question, you may supplement "
+     "with your own knowledge — but clearly label it like this:\n"
+     "📄 From documents: <answer from context>\n"
+     "🧠 From AI knowledge: <answer from own knowledge>\n\n"
+     "{style_instructions}\n\n"
+     "Context:\n{context}"),
+    MessagesPlaceholder("chat_history"),
+    ("human", "{input}")
+])
 if user_q:
     history = get_history(session_id)
 
@@ -450,5 +474,6 @@ if user_q:
         for i, doc in enumerate(docs, 1):
             st.markdown(f"**{i}. {doc.metadata.get('source_file','Unknown')} (p{doc.metadata.get('page','?')})**")
             st.write(doc.page_content[:500] + ("..." if len(doc.page_content) > 500 else ""))
+
 
 
