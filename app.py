@@ -56,7 +56,7 @@ with st.sidebar:
     st.subheader("🌐 Response Language")
     language = st.selectbox(
         "Respond in",
-        ["English", "Roman Urdu (English text)", "Arabic", "French", "Spanish", "German", "Chinese"],
+        ["English", "Roman Urdu", "Arabic", "French", "Spanish", "German", "Chinese"],
         index=0
     )
 
@@ -206,6 +206,15 @@ def get_style_instructions(tone: str, length: str, language: str) -> str:
     length_map = {
         "Short & Concise": "Keep your answer brief and to the point. 2-4 sentences max unless bullet points are needed.",
         "Detailed":         "Give a thorough, detailed answer covering all relevant aspects."
+    }
+    language_map = {
+        "English":     "Always respond in English.",
+        "Roman Urdu":  "Always respond in Roman Urdu. Roman Urdu means writing Urdu words using English/Latin alphabets — for example: 'Yeh document finance ke baare mein hai'. Do NOT use Urdu script (Arabic letters). Only use Latin/English letters to write Urdu words.",
+        "Arabic":      "Always respond in Arabic script.",
+        "French":      "Always respond in French.",
+        "Spanish":     "Always respond in Spanish.",
+        "German":      "Always respond in German.",
+        "Chinese":     "Always respond in Chinese (Simplified)."
     }
     return (
         f"Tone: {tone_map[tone]}\n"
@@ -417,6 +426,7 @@ if user_q:
                     st.write(doc.page_content[:500] + ("..." if len(doc.page_content) > 500 else ""))
             else:
                 st.info("No chunks retrieved — AI answered from its own knowledge.")
+
 
 
 
