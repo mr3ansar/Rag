@@ -13,7 +13,7 @@ from langchain_chroma import Chroma
 
 ## loading api and setting page
 load_dotenv()
-st.set_page_config(page_title="🤖 RAG Chatbot" layout="wide")
+st.set_page_config(page_title="🤖 RAG Chatbot", layout="wide")
 st.title("🔍 RAG Q&A with multiple PDFs + Chat History")
 
 #Making sidebar
@@ -200,3 +200,4 @@ if user_q:
         for i, doc in enumerate(docs, 1):
             st.markdown(f"**{i}. {doc.metadata.get('source_file','Unknown')} (p{doc.metadata.get('page','?')})**")
             st.write(doc.page_content[:500] + ("..." if len(doc.page_content) > 500 else ""))
+
