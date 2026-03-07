@@ -2,7 +2,6 @@
 import os 
 import tempfile
 import streamlit as st
-from dotenv import load_dotenv
 from langchain_groq import ChatGroq
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_community.document_loaders import PyPDFLoader
@@ -12,7 +11,6 @@ from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
 
 ## loading api and setting page
-load_dotenv()
 st.set_page_config(page_title="🤖 RAG Chatbot", layout="wide")
 st.title("🔍 RAG Q&A with multiple PDFs + Chat History")
 
@@ -23,7 +21,7 @@ with st.sidebar:
     api_key_input = st.text_input("Groq Api Key", type="password")
     st.caption("Upload PDFs To Get Questions Answered from Pdf")
 
-api_key = api_key_input or os.getenv("GROQ_API_KEY")
+api_key = api_key_input or st.secrets.get("GROQ_API_KEY")
 
 if not api_key:
     st.warning("""Enter your Groq API key to continue(set it up in the .env as "GROQ_API_KEY")""")
@@ -200,4 +198,5 @@ if user_q:
         for i, doc in enumerate(docs, 1):
             st.markdown(f"**{i}. {doc.metadata.get('source_file','Unknown')} (p{doc.metadata.get('page','?')})**")
             st.write(doc.page_content[:500] + ("..." if len(doc.page_content) > 500 else ""))
+
 
