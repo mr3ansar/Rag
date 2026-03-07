@@ -91,6 +91,12 @@ uploaded_files = st.file_uploader(
     type="pdf",
     accept_multiple_files=True
 )
+#If new files uploaded, save them to session state
+if uploaded_files:
+    st.session_state["uploaded_files"] = uploaded_files
+#Fall back to previously saved files if uploader is empty   
+elif "uploaded_files" in st.session_state:
+    uploaded_files = st.session_state["uploaded_files"]
 
 if not uploaded_files:
     st.info("Upload one or more pdfs to continue")
@@ -319,3 +325,4 @@ if user_q:
         for i, doc in enumerate(docs, 1):
             st.markdown(f"**{i}. {doc.metadata.get('source_file','Unknown')} (p{doc.metadata.get('page','?')})**")
             st.write(doc.page_content[:500] + ("..." if len(doc.page_content) > 500 else ""))
+
