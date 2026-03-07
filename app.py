@@ -26,11 +26,11 @@ with st.sidebar:
     # 🤖 Model selector
     st.subheader("🤖 Model")
     model_options = {
-        "llama-3.3-70b-versatile       — Best overall":      "llama-3.3-70b-versatile",
-        "mixtral-8x7b-32768            — Long documents":    "mixtral-8x7b-32768",
-        "gemma2-9b-it                  — Google model":      "gemma2-9b-it",
-        "llama-3.1-8b-instant          — Fastest responses": "llama-3.1-8b-instant",
-        "deepseek-r1-distill-llama-70b — Deep reasoning":    "deepseek-r1-distill-llama-70b",
+        "llama-3.3-70b-versatile       — Best overall":        "llama-3.3-70b-versatile",
+        "openai/gpt-oss-120b           — Largest & smartest":  "openai/gpt-oss-120b",
+        "openai/gpt-oss-20b            — Fastest (~1000 t/s)": "openai/gpt-oss-20b",
+        "llama-3.1-8b-instant          — Lightweight & fast":  "llama-3.1-8b-instant",
+        "deepseek-r1-distill-llama-70b — Deep reasoning":      "deepseek-r1-distill-llama-70b",
     }
     selected_model_label = st.selectbox(
         "Choose model",
@@ -111,7 +111,7 @@ if not api_key:
     st.warning('Enter your Groq API key to continue')
     st.stop()
 
-# Models (cached - created only once per unique combination) 
+# Models (cached - created only once per unique combination)
 @st.cache_resource
 def load_embeddings():
     return HuggingFaceEmbeddings(
@@ -126,11 +126,11 @@ def load_llm(api_key, model_name):
         model_name=model_name
     )
 
-embeddings     = load_embeddings()
-llm            = load_llm(api_key, selected_model)
+embeddings = load_embeddings()
+llm        = load_llm(api_key, selected_model)
 
 # Models that do NOT support system messages
-NO_SYSTEM_MODELS = ["deepseek-r1-distill-llama-70b", "gemma2-9b-it"]
+NO_SYSTEM_MODELS = ["deepseek-r1-distill-llama-70b"]
 
 # PDF Upload
 uploaded_files = st.file_uploader(
@@ -249,18 +249,23 @@ def get_style_instructions(tone: str, length: str, language: str) -> str:
         f"Language: {language_map[language]}"
     )
 
-# Helper: safe rewrite (handles models that don't support system messages)
+# Helper: safe rewrite
 def rewrite_question(user_q: str, history, model_name: str) -> str:
-    if model_name in NO_SYSTEM_MODELS:
-        # Flatten full conversation into a single human message
-        history_text = ""
-        for msg in history.messages:
-            role = "User" if msg.type == "human" else "Assistant"
-            history_text += f"{role}: {msg.content}\n"
+    # Build history text for flat prompt
+    history_text = ""
+    for msg in history.messages:
+        role = "User" if msg.type == "human" else "Assistant"
+        history_text += f"{role}: {msg.content}\n"
 
+    # Use flat prompt if:
+    # 1. Model doesn't support system messages, OR
+    # 2. Chat history is empty (prevents empty MessagesPlaceholder error)
+    if model_name in NO_SYSTEM_MODELS or not history.messages:
         flat_prompt = (
-            f"Given this conversation history:\n{history_text}\n"
-            f"Rewrite this question into a standalone search query: '{user_q}'\n"
+            f"Rewrite this question into a standalone search query "
+            f"so it can retrieve documents from a vector database.\n"
+            + (f"Conversation so far:\n{history_text}\n" if history_text else "")
+            + f"Question: '{user_q}'\n"
             f"Return ONLY the rewritten query, nothing else."
         )
         return llm.invoke([HumanMessage(content=flat_prompt)]).content.strip()
@@ -271,9 +276,13 @@ def rewrite_question(user_q: str, history, model_name: str) -> str:
         )
         return llm.invoke(rewrite_msgs).content.strip()
 
-# ── Helper: safe LLM invoke (handles models that don't support system messages) ─
+# Helper: safe LLM invoke
 def safe_llm_invoke(prompt_template, model_name: str, fallback_text: str, **kwargs) -> str:
-    if model_name in NO_SYSTEM_MODELS:
+    chat_history = kwargs.get("chat_history", [])
+
+    # Use flat prompt if model has no system message support
+    # OR if chat history is empty (prevents empty MessagesPlaceholder error)
+    if model_name in NO_SYSTEM_MODELS or not chat_history:
         return llm.invoke([HumanMessage(content=fallback_text)]).content
     else:
         msgs = prompt_template.format_messages(**kwargs)
@@ -325,7 +334,7 @@ hybrid_prompt = ChatPromptTemplate.from_messages([
     ("human", "{input}")
 ])
 
-# Session State
+# Session State 
 if "chat_histories" not in st.session_state:
     st.session_state.chat_histories = {}
 
@@ -337,10 +346,10 @@ def get_history(session_id: str):
         st.session_state.chat_histories[session_id] = ChatMessageHistory()
     return st.session_state.chat_histories[session_id]
 
-# Chat UI
+# Chat UI 
 history = get_history(session_id)
 
-# Chat export
+# Chat export 
 def build_export_text(history, session_id: str) -> str:
     lines = [
         f"Chat Export — Session: {session_id}",
@@ -361,7 +370,7 @@ if history.messages:
         mime="text/plain"
     )
 
-# Render previous messages with feedback buttons
+# Render previous messages with feedback buttons 
 ai_msg_index = 0
 
 for msg in history.messages:
@@ -392,13 +401,11 @@ user_q = st.chat_input("Ask a question....")
 
 # Chat Pipeline
 if user_q:
-    history = get_history(session_id)
+    history            = get_history(session_id)
     style_instructions = get_style_instructions(tone, answer_length, language)
     st.chat_message("user").write(user_q)
 
     # MODE: LLM Only
-    if mode == "🤖 LLM Only":
-        # Build fallback flat prompt for no-system models
         fallback = (
             f"Answer this question using your own knowledge.\n"
             f"{style_instructions}\n\n"
@@ -486,7 +493,7 @@ if user_q:
         st.chat_message("assistant").write(answer)
         history.add_user_message(user_q)
         history.add_ai_message(answer)
-        #Debug Panel
+
         with st.expander("🧪 Debug: Rewritten Query & Retrieval"):
             st.write("**Rewritten (standalone) query:**")
             st.code(standalone_q or "(empty)", language="text")
