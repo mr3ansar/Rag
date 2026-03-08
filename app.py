@@ -151,22 +151,28 @@ st.session_state["uploaded_files"] = uploaded_files
 
 # ── Helper: delete chroma index folder without shutil ─────────────────────────
 def delete_chroma_index(path: str):
-    if os.path.exists(path):
-        for root, dirs, files in os.walk(path, topdown=False):
-            for file in files:
-                try:
-                    os.remove(os.path.join(root, file))
-                except Exception:
-                    pass
-            for d in dirs:
-                try:
-                    os.rmdir(os.path.join(root, d))
-                except Exception:
-                    pass
-        try:
-            os.rmdir(path)
-        except Exception:
-            pass
+    if not os.path.exists(path):
+        return
+    for root, dirs, files in os.walk(path, topdown=False):
+        for file in files:
+            fp = os.path.join(root, file)
+            try:
+                os.chmod(fp, 0o777)
+                os.remove(fp)
+            except Exception:
+                pass
+        for d in dirs:
+            dp = os.path.join(root, d)
+            try:
+                os.chmod(dp, 0o777)
+                os.rmdir(dp)
+            except Exception:
+                pass
+    try:
+        os.chmod(path, 0o777)
+        os.rmdir(path)
+    except Exception:
+        pass
 
 # ── Build Retriever (cached - rebuilds only when files change) ─────────────────
 @st.cache_resource(show_spinner="📄 Processing PDFs...")
@@ -550,3 +556,4 @@ if user_q:
                     st.write(doc.page_content[:500] + ("..." if len(doc.page_content) > 500 else ""))
             else:
                 st.info("No chunks retrieved — AI answered from its own knowledge.")
+
