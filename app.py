@@ -585,4 +585,5 @@ if user_q:
                     st.markdown(f"**{i}. {doc.metadata.get('source_file','Unknown')} (p{doc.metadata.get('page','?')})**")
                     st.write(doc.page_content[:500] + ("..." if len(doc.page_content) > 500 else ""))
             else:
-                st.info("No chunks retrieved — AI answered from its own knowledge.") Sonnet 4.6
+                st.info("No chunks retrieved — AI answered from its own knowledge.")
+
