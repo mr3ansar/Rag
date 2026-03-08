@@ -573,7 +573,7 @@ if user_q:
         st.chat_message("assistant").write(answer)
         history.add_user_message(user_q)
         history.add_ai_message(answer)
-        #Debug Panel
+
         with st.expander("🧪 Debug: Rewritten Query & Retrieval"):
             st.write("**Rewritten (standalone) query:**")
             st.code(standalone_q or "(empty)", language="text")
