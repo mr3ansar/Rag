@@ -343,13 +343,34 @@ def rewrite_question(user_q: str, history, model_name: str) -> str:
 def safe_llm_invoke(prompt_template, fallback_text: str, **kwargs) -> str:
     chat_history = kwargs.get("chat_history", [])
 
-    # Use flat prompt when chat history is empty
-    # (prevents empty MessagesPlaceholder error)
-    if not chat_history:
-        return llm.invoke([HumanMessage(content=fallback_text)]).content
-    else:
-        msgs = prompt_template.format_messages(**kwargs)
-        return llm.invoke(msgs).content
+    try:
+        if not chat_history:
+            return llm.invoke([HumanMessage(content=fallback_text)]).content
+        else:
+            msgs = prompt_template.format_messages(**kwargs)
+            return llm.invoke(msgs).content
+
+    except Exception as e:
+        err = str(e).lower()
+
+        if "rate_limit" in err or "429" in err:
+            st.error("⏱️ Rate limit hit — wait a moment and retry.")
+            return "_(Rate limit reached — please wait and retry.)_"
+
+        if "401" in err or "auth" in err or "api_key" in err:
+            st.error("🔑 Invalid Groq API key.")
+            return "_(Authentication failed — check your API key.)_"
+
+        if "context" in err or "too long" in err or "413" in err:
+            try:
+                return llm.invoke([HumanMessage(content=fallback_text[:2000])]).content
+            except Exception:
+                st.error("📏 Input too long. Try a shorter question.")
+                return "_(Input too long — please ask a shorter question.)_"
+
+        # Show full error so you can diagnose next time
+        st.error(f"🚨 LLM error: {e}")
+        return "_(An error occurred — please try again.)_"
 
 # ── Prompts ────────────────────────────────────────────────────────────────────
 contextualize_q_prompt = ChatPromptTemplate.from_messages([
@@ -568,4 +589,5 @@ if user_q:
                     st.write(doc.page_content[:500] + ("..." if len(doc.page_content) > 500 else ""))
             else:
                 st.info("No chunks retrieved — AI answered from its own knowledge.")
+
 
