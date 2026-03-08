@@ -151,28 +151,39 @@ st.session_state["uploaded_files"] = uploaded_files
 
 # ── Helper: delete chroma index folder without shutil ─────────────────────────
 def delete_chroma_index(path: str):
-    if os.path.exists(path):
-        for root, dirs, files in os.walk(path, topdown=False):
-            for file in files:
-                try:
-                    os.remove(os.path.join(root, file))
-                except Exception:
-                    pass
-            for d in dirs:
-                try:
-                    os.rmdir(os.path.join(root, d))
-                except Exception:
-                    pass
-        try:
-            os.rmdir(path)
-        except Exception:
-            pass
+    if not os.path.exists(path):
+        return
+    # Walk bottom-up: delete files first, then empty dirs
+    for root, dirs, files in os.walk(path, topdown=False):
+        for file in files:
+            fp = os.path.join(root, file)
+            try:
+                os.chmod(fp, 0o777)   # ✅ force write permission before deleting
+                os.remove(fp)
+            except Exception:
+                pass
+        for d in dirs:
+            dp = os.path.join(root, d)
+            try:
+                os.chmod(dp, 0o777)   # ✅ force write permission on dirs too
+                os.rmdir(dp)
+            except Exception:
+                pass
+    try:
+        os.chmod(path, 0o777)
+        os.rmdir(path)
+    except Exception:
+        pass
 
 # ── Build Retriever (cached - rebuilds only when files change) ─────────────────
 @st.cache_resource(show_spinner="📄 Processing PDFs...")
 def build_retriever(file_keys: tuple, _embeddings):
-    # ✅ Wipe old index first — prevents duplicate chunks accumulating
-    delete_chroma_index("chroma_index")
+    # ✅ Use a unique index path based on file_keys hash
+    # This means different file sets never share the same index folder
+    index_path = f"chroma_index_{abs(hash(file_keys))}"
+
+    # Delete any existing index at this path before rebuilding
+    delete_chroma_index(index_path)
 
     all_docs  = []
     tmp_paths = []
@@ -204,8 +215,15 @@ def build_retriever(file_keys: tuple, _embeddings):
     vectorstore = Chroma.from_documents(
         splits,
         _embeddings,
-        persist_directory="chroma_index"
+        persist_directory=index_path    
     )
+
+    retriever = vectorstore.as_retriever(
+        search_type="mmr",
+        search_kwargs={"k": 5, "fetch_k": 20}
+    )
+
+    return retriever, len(all_docs), len(splits)
 
     # MMR fetches 20 candidates then picks best 5 diverse ones
     retriever = vectorstore.as_retriever(
@@ -550,3 +568,4 @@ if user_q:
                     st.write(doc.page_content[:500] + ("..." if len(doc.page_content) > 500 else ""))
             else:
                 st.info("No chunks retrieved — AI answered from its own knowledge.")
+
