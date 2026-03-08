@@ -1,5 +1,6 @@
 # importing libraries
 import os
+import pickle
 import tempfile
 import streamlit as st
 from datetime import datetime
@@ -15,6 +16,39 @@ from langchain_chroma import Chroma
 # Page setup
 st.set_page_config(page_title="🤖 RAG Chatbot", layout="wide")
 st.title("🔍 RAG Q&A with multiple PDFs + Chat History")
+
+# Chat history persistence helpers
+CHAT_CACHE_DIR = "chat_cache"
+
+def save_chat_history(session_id: str, history):
+    os.makedirs(CHAT_CACHE_DIR, exist_ok=True)
+    path = os.path.join(CHAT_CACHE_DIR, f"{session_id}.pkl")
+    try:
+        with open(path, "wb") as f:
+            pickle.dump(history.messages, f)
+    except Exception as e:
+        st.warning(f"⚠️ Could not save chat history: {e}")
+
+def load_chat_history(session_id: str) -> ChatMessageHistory:
+    path = os.path.join(CHAT_CACHE_DIR, f"{session_id}.pkl")
+    history = ChatMessageHistory()
+    if os.path.exists(path):
+        try:
+            with open(path, "rb") as f:
+                messages = pickle.load(f)
+            for msg in messages:
+                history.add_message(msg)
+        except Exception:
+            pass  # corrupted file — start fresh
+    return history
+
+def delete_chat_history(session_id: str):
+    path = os.path.join(CHAT_CACHE_DIR, f"{session_id}.pkl")
+    try:
+        if os.path.exists(path):
+            os.remove(path)
+    except Exception:
+        pass
 
 # Sidebar
 with st.sidebar:
@@ -85,6 +119,7 @@ with st.sidebar:
     if st.button("🗑️ Clear Chat History", use_container_width=True):
         if "chat_histories" in st.session_state:
             st.session_state.chat_histories[session_id] = ChatMessageHistory()
+        delete_chat_history(session_id)  # also delete the pickle file
         st.success("Chat cleared!")
         st.rerun()
     st.divider()
@@ -174,7 +209,6 @@ def delete_chroma_index(path: str):
 # Build Retriever
 @st.cache_resource(show_spinner="📄 Processing PDFs...")
 def build_retriever(file_keys: tuple, _embeddings):
-    # Unique index path per file set — never reuses a stale or corrupted index
     index_path = f"chroma_index_{abs(hash(file_keys))}"
     delete_chroma_index(index_path)
 
@@ -200,7 +234,7 @@ def build_retriever(file_keys: tuple, _embeddings):
             pass
 
     if not all_docs:
-        raise ValueError("No text could be extracted from the uploaded PDFs. The file may be scanned or image-based.")
+        raise ValueError("No text could be extracted. The file may be scanned or image-based.")
 
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=1200,
@@ -209,7 +243,7 @@ def build_retriever(file_keys: tuple, _embeddings):
     splits = text_splitter.split_documents(all_docs)
 
     if not splits:
-        raise ValueError("PDF loaded but produced no text chunks. Try a different file.")
+        raise ValueError("PDF loaded but produced no chunks. Try a different file.")
 
     vectorstore = Chroma.from_documents(
         splits,
@@ -217,7 +251,6 @@ def build_retriever(file_keys: tuple, _embeddings):
         persist_directory=index_path
     )
 
-    # MMR fetches 20 candidates then picks best 5 diverse ones
     retriever = vectorstore.as_retriever(
         search_type="mmr",
         search_kwargs={"k": 5, "fetch_k": 20}
@@ -300,17 +333,14 @@ def deduplicate(docs: list) -> list:
 # Helper: smart retrieval with 3 attempts and deduplication
 def smart_retrieve(retriever, standalone_q: str, user_q: str) -> list:
     try:
-        # Attempt 1: rewritten query
         docs = deduplicate(retriever.invoke(standalone_q))
         if docs:
             return docs
 
-        # Attempt 2: original question
         docs = deduplicate(retriever.invoke(user_q))
         if docs:
             return docs
 
-        # Attempt 3: keywords only (words longer than 3 chars)
         keywords = " ".join([w for w in user_q.split() if len(w) > 3])
         if keywords:
             docs = deduplicate(retriever.invoke(keywords))
@@ -325,7 +355,6 @@ def smart_retrieve(retriever, standalone_q: str, user_q: str) -> list:
 
 # Helper: rewrite question to standalone query
 def rewrite_question(user_q: str, history, model_name: str) -> str:
-    # No history means question is already standalone
     if not history.messages:
         return user_q
     try:
@@ -422,9 +451,10 @@ if "chat_histories" not in st.session_state:
 if "feedback" not in st.session_state:
     st.session_state.feedback = {}
 
-def get_history(session_id: str):
+# Get history — loads from pickle if not already in session state
+def get_history(session_id: str) -> ChatMessageHistory:
     if session_id not in st.session_state.chat_histories:
-        st.session_state.chat_histories[session_id] = ChatMessageHistory()
+        st.session_state.chat_histories[session_id] = load_chat_history(session_id)
     return st.session_state.chat_histories[session_id]
 
 # Chat UI
@@ -503,6 +533,7 @@ if user_q:
         st.chat_message("assistant").write(answer)
         history.add_user_message(user_q)
         history.add_ai_message(answer)
+        save_chat_history(session_id, history)
 
     # MODE: RAG Only
     elif mode == "🗂️ RAG Only":
@@ -514,6 +545,7 @@ if user_q:
             st.chat_message("assistant").write(answer)
             history.add_user_message(user_q)
             history.add_ai_message(answer)
+            save_chat_history(session_id, history)
             st.stop()
 
         context_str = _join_docs(docs)
@@ -535,6 +567,7 @@ if user_q:
         st.chat_message("assistant").write(answer)
         history.add_user_message(user_q)
         history.add_ai_message(answer)
+        save_chat_history(session_id, history)
 
         with st.expander("🧪 Debug: Rewritten Query & Retrieval"):
             st.write("**Rewritten (standalone) query:**")
@@ -572,6 +605,7 @@ if user_q:
         st.chat_message("assistant").write(answer)
         history.add_user_message(user_q)
         history.add_ai_message(answer)
+        save_chat_history(session_id, history)
 
         with st.expander("🧪 Debug: Rewritten Query & Retrieval"):
             st.write("**Rewritten (standalone) query:**")
@@ -586,4 +620,3 @@ if user_q:
                     st.write(doc.page_content[:500] + ("..." if len(doc.page_content) > 500 else ""))
             else:
                 st.info("No chunks retrieved — AI answered from its own knowledge.")
-
