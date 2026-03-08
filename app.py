@@ -110,7 +110,7 @@ if not api_key:
     st.warning("Enter your Groq API key to continue")
     st.stop()
 
-# ── Models (cached) ────────────────────────────────────────────────────────────
+# ── Models (cached - created only once per unique combination) ─────────────────
 @st.cache_resource
 def load_embeddings():
     return HuggingFaceEmbeddings(
@@ -135,8 +135,10 @@ uploaded_files = st.file_uploader(
     accept_multiple_files=True
 )
 
+# If new files uploaded, save them to session state
 if uploaded_files:
     st.session_state["uploaded_files"] = uploaded_files
+# Fall back to previously saved files if uploader is empty
 elif "uploaded_files" in st.session_state:
     uploaded_files = st.session_state["uploaded_files"]
 
@@ -144,39 +146,33 @@ if not uploaded_files:
     st.info("Upload one or more PDFs to continue")
     st.stop()
 
+# Store files BEFORE calling build_retriever
 st.session_state["uploaded_files"] = uploaded_files
 
-# ── Helper: delete chroma index without shutil ────────────────────────────────
+# ── Helper: delete chroma index folder without shutil ─────────────────────────
 def delete_chroma_index(path: str):
-    if not os.path.exists(path):
-        return
-    for root, dirs, files in os.walk(path, topdown=False):
-        for file in files:
-            fp = os.path.join(root, file)
-            try:
-                os.chmod(fp, 0o777)
-                os.remove(fp)
-            except Exception:
-                pass
-        for d in dirs:
-            dp = os.path.join(root, d)
-            try:
-                os.chmod(dp, 0o777)
-                os.rmdir(dp)
-            except Exception:
-                pass
-    try:
-        os.chmod(path, 0o777)
-        os.rmdir(path)
-    except Exception:
-        pass
+    if os.path.exists(path):
+        for root, dirs, files in os.walk(path, topdown=False):
+            for file in files:
+                try:
+                    os.remove(os.path.join(root, file))
+                except Exception:
+                    pass
+            for d in dirs:
+                try:
+                    os.rmdir(os.path.join(root, d))
+                except Exception:
+                    pass
+        try:
+            os.rmdir(path)
+        except Exception:
+            pass
 
-# ── Build Retriever ────────────────────────────────────────────────────────────
+# ── Build Retriever (cached - rebuilds only when files change) ─────────────────
 @st.cache_resource(show_spinner="📄 Processing PDFs...")
 def build_retriever(file_keys: tuple, _embeddings):
-    # Unique index path per file set — never reuses stale index
-    index_path = f"chroma_index_{abs(hash(file_keys))}"
-    delete_chroma_index(index_path)
+    # ✅ Wipe old index first — prevents duplicate chunks accumulating
+    delete_chroma_index("chroma_index")
 
     all_docs  = []
     tmp_paths = []
@@ -208,10 +204,10 @@ def build_retriever(file_keys: tuple, _embeddings):
     vectorstore = Chroma.from_documents(
         splits,
         _embeddings,
-        persist_directory=index_path
+        persist_directory="chroma_index"
     )
 
-    # MMR: fetch 20 candidates, return best 5 diverse ones
+    # MMR fetches 20 candidates then picks best 5 diverse ones
     retriever = vectorstore.as_retriever(
         search_type="mmr",
         search_kwargs={"k": 5, "fetch_k": 20}
@@ -283,7 +279,7 @@ def deduplicate(docs: list) -> list:
             unique.append(doc)
     return unique
 
-# ── Helper: smart retrieval ────────────────────────────────────────────────────
+# ── Helper: smart retrieval (3 attempts + deduplication) ──────────────────────
 def smart_retrieve(retriever, standalone_q: str, user_q: str) -> list:
     try:
         # Attempt 1: rewritten query
@@ -311,8 +307,10 @@ def smart_retrieve(retriever, standalone_q: str, user_q: str) -> list:
 
 # ── Helper: rewrite question ───────────────────────────────────────────────────
 def rewrite_question(user_q: str, history, model_name: str) -> str:
+    # No history = question is already standalone, skip rewrite
     if not history.messages:
         return user_q
+
     try:
         rewrite_msgs = contextualize_q_prompt.format_messages(
             chat_history=history.messages,
@@ -320,40 +318,20 @@ def rewrite_question(user_q: str, history, model_name: str) -> str:
         )
         return llm.invoke(rewrite_msgs).content.strip()
     except Exception:
+        # If rewrite fails, fall back to original question
         return user_q
 
 # ── Helper: safe LLM invoke ────────────────────────────────────────────────────
 def safe_llm_invoke(prompt_template, fallback_text: str, **kwargs) -> str:
     chat_history = kwargs.get("chat_history", [])
 
-    try:
-        if not chat_history:
-            return llm.invoke([HumanMessage(content=fallback_text)]).content
-        else:
-            msgs = prompt_template.format_messages(**kwargs)
-            return llm.invoke(msgs).content
-
-    except Exception as e:
-        err = str(e).lower()
-
-        if "rate_limit" in err or "429" in err:
-            st.error("⏱️ Rate limit hit — wait a moment and retry.")
-            return "_(Rate limit reached — please wait and retry.)_"
-
-        if "401" in err or "auth" in err or "api_key" in err:
-            st.error("🔑 Invalid Groq API key.")
-            return "_(Authentication failed — check your API key.)_"
-
-        if "context" in err or "too long" in err or "413" in err:
-            try:
-                return llm.invoke([HumanMessage(content=fallback_text[:2000])]).content
-            except Exception:
-                st.error("📏 Input too long. Try a shorter question.")
-                return "_(Input too long — please ask a shorter question.)_"
-
-        # Show full error for diagnosis
-        st.error(f"🚨 LLM error: {e}")
-        return "_(An error occurred — please try again.)_"
+    # Use flat prompt when chat history is empty
+    # (prevents empty MessagesPlaceholder error)
+    if not chat_history:
+        return llm.invoke([HumanMessage(content=fallback_text)]).content
+    else:
+        msgs = prompt_template.format_messages(**kwargs)
+        return llm.invoke(msgs).content
 
 # ── Prompts ────────────────────────────────────────────────────────────────────
 contextualize_q_prompt = ChatPromptTemplate.from_messages([
