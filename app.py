@@ -177,40 +177,17 @@ def delete_chroma_index(path: str):
 # ── Build Retriever (cached - rebuilds only when files change) ─────────────────
 @st.cache_resource(show_spinner="📄 Processing PDFs...")
 def build_retriever(file_keys: tuple, _embeddings):
-    # ✅ Wipe old index first — prevents duplicate chunks accumulating
-    delete_chroma_index("chroma_index")
+    # Unique path per file set — never reuses a stale/corrupted index
+    index_path = f"chroma_index_{abs(hash(file_keys))}"
+    delete_chroma_index(index_path)
 
     all_docs  = []
     tmp_paths = []
-
-    for pdf in st.session_state["uploaded_files"]:
-        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
-        tmp.write(pdf.getvalue())
-        tmp.close()
-        tmp_paths.append(tmp.name)
-
-        loader = PyPDFLoader(tmp.name)
-        docs   = loader.load()
-        for d in docs:
-            d.metadata["source_file"] = pdf.name
-        all_docs.extend(docs)
-
-    for p in tmp_paths:
-        try:
-            os.unlink(p)
-        except Exception:
-            pass
-
-    text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1200,
-        chunk_overlap=120
-    )
-    splits = text_splitter.split_documents(all_docs)
-
+    ...
     vectorstore = Chroma.from_documents(
         splits,
         _embeddings,
-        persist_directory="chroma_index"
+        persist_directory=index_path      # ✅ unique path
     )
 
     # MMR fetches 20 candidates then picks best 5 diverse ones
@@ -556,4 +533,5 @@ if user_q:
                     st.write(doc.page_content[:500] + ("..." if len(doc.page_content) > 500 else ""))
             else:
                 st.info("No chunks retrieved — AI answered from its own knowledge.")
+
 
