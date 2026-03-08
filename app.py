@@ -1,5 +1,5 @@
 # importing libraries
-import os 
+import os
 import tempfile
 import streamlit as st
 from datetime import datetime
@@ -12,7 +12,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
 
-# Page setup
+# ── Page setup ─────────────────────────────────────────────────────────────────
 st.set_page_config(page_title="🤖 RAG Chatbot", layout="wide")
 st.title("🔍 RAG Q&A with multiple PDFs + Chat History")
 
@@ -26,11 +26,10 @@ with st.sidebar:
     # 🤖 Model selector
     st.subheader("🤖 Model")
     model_options = {
-        "llama-3.3-70b-versatile       — Best overall":        "llama-3.3-70b-versatile",
-        "openai/gpt-oss-120b           — Largest & smartest":  "openai/gpt-oss-120b",
-        "openai/gpt-oss-20b            — Fastest (~1000 t/s)": "openai/gpt-oss-20b",
-        "llama-3.1-8b-instant          — Lightweight & fast":  "llama-3.1-8b-instant",
-        "deepseek-r1-distill-llama-70b — Deep reasoning":      "deepseek-r1-distill-llama-70b",
+        "llama-3.3-70b-versatile  — Best overall":        "llama-3.3-70b-versatile",
+        "openai/gpt-oss-120b      — Largest & smartest":  "openai/gpt-oss-120b",
+        "openai/gpt-oss-20b       — Fastest (~1000 t/s)": "openai/gpt-oss-20b",
+        "llama-3.1-8b-instant     — Lightweight & fast":  "llama-3.1-8b-instant",
     }
     selected_model_label = st.selectbox(
         "Choose model",
@@ -108,7 +107,7 @@ with st.sidebar:
 api_key = api_key_input or st.secrets.get("GROQ_API_KEY")
 
 if not api_key:
-    st.warning('Enter your Groq API key to continue')
+    st.warning("Enter your Groq API key to continue")
     st.stop()
 
 # ── Models (cached - created only once per unique combination) ─────────────────
@@ -129,12 +128,9 @@ def load_llm(api_key, model_name):
 embeddings = load_embeddings()
 llm        = load_llm(api_key, selected_model)
 
-# Models that do NOT support system messages
-NO_SYSTEM_MODELS = ["deepseek-r1-distill-llama-70b"]
-
 # ── PDF Upload ─────────────────────────────────────────────────────────────────
 uploaded_files = st.file_uploader(
-    "📁 Upload pdf Files Here",
+    "📁 Upload PDF Files Here",
     type="pdf",
     accept_multiple_files=True
 )
@@ -147,15 +143,37 @@ elif "uploaded_files" in st.session_state:
     uploaded_files = st.session_state["uploaded_files"]
 
 if not uploaded_files:
-    st.info("Upload one or more pdfs to continue")
+    st.info("Upload one or more PDFs to continue")
     st.stop()
 
 # Store files BEFORE calling build_retriever
 st.session_state["uploaded_files"] = uploaded_files
 
+# ── Helper: delete chroma index folder without shutil ─────────────────────────
+def delete_chroma_index(path: str):
+    if os.path.exists(path):
+        for root, dirs, files in os.walk(path, topdown=False):
+            for file in files:
+                try:
+                    os.remove(os.path.join(root, file))
+                except Exception:
+                    pass
+            for d in dirs:
+                try:
+                    os.rmdir(os.path.join(root, d))
+                except Exception:
+                    pass
+        try:
+            os.rmdir(path)
+        except Exception:
+            pass
+
 # ── Build Retriever (cached - rebuilds only when files change) ─────────────────
 @st.cache_resource(show_spinner="📄 Processing PDFs...")
 def build_retriever(file_keys: tuple, _embeddings):
+    # ✅ Wipe old index first — prevents duplicate chunks accumulating
+    delete_chroma_index("chroma_index")
+
     all_docs  = []
     tmp_paths = []
 
@@ -189,6 +207,7 @@ def build_retriever(file_keys: tuple, _embeddings):
         persist_directory="chroma_index"
     )
 
+    # MMR fetches 20 candidates then picks best 5 diverse ones
     retriever = vectorstore.as_retriever(
         search_type="mmr",
         search_kwargs={"k": 5, "fetch_k": 20}
@@ -249,40 +268,66 @@ def get_style_instructions(tone: str, length: str, language: str) -> str:
         f"Language: {language_map[language]}"
     )
 
-# ── Helper: safe rewrite ───────────────────────────────────────────────────────
-def rewrite_question(user_q: str, history, model_name: str) -> str:
-    # Build history text for flat prompt
-    history_text = ""
-    for msg in history.messages:
-        role = "User" if msg.type == "human" else "Assistant"
-        history_text += f"{role}: {msg.content}\n"
+# ── Helper: deduplicate retrieved docs ────────────────────────────────────────
+def deduplicate(docs: list) -> list:
+    seen   = set()
+    unique = []
+    for doc in docs:
+        content = doc.page_content.strip()
+        if content not in seen:
+            seen.add(content)
+            unique.append(doc)
+    return unique
 
-    # Use flat prompt if:
-    # 1. Model doesn't support system messages, OR
-    # 2. Chat history is empty (prevents empty MessagesPlaceholder error)
-    if model_name in NO_SYSTEM_MODELS or not history.messages:
-        flat_prompt = (
-            f"Rewrite this question into a standalone search query "
-            f"so it can retrieve documents from a vector database.\n"
-            + (f"Conversation so far:\n{history_text}\n" if history_text else "")
-            + f"Question: '{user_q}'\n"
-            f"Return ONLY the rewritten query, nothing else."
-        )
-        return llm.invoke([HumanMessage(content=flat_prompt)]).content.strip()
-    else:
+# ── Helper: smart retrieval (3 attempts + deduplication) ──────────────────────
+def smart_retrieve(retriever, standalone_q: str, user_q: str) -> list:
+    try:
+        # Attempt 1: rewritten query
+        docs = deduplicate(retriever.invoke(standalone_q))
+        if docs:
+            return docs
+
+        # Attempt 2: original question
+        docs = deduplicate(retriever.invoke(user_q))
+        if docs:
+            return docs
+
+        # Attempt 3: keywords only (words longer than 3 chars)
+        keywords = " ".join([w for w in user_q.split() if len(w) > 3])
+        if keywords:
+            docs = deduplicate(retriever.invoke(keywords))
+            if docs:
+                return docs
+
+        return []
+
+    except Exception as e:
+        st.warning(f"⚠️ Retrieval error: {e}")
+        return []
+
+# ── Helper: rewrite question ───────────────────────────────────────────────────
+def rewrite_question(user_q: str, history, model_name: str) -> str:
+    # No history = question is already standalone, skip rewrite
+    if not history.messages:
+        return user_q
+
+    try:
         rewrite_msgs = contextualize_q_prompt.format_messages(
             chat_history=history.messages,
             input=user_q
         )
         return llm.invoke(rewrite_msgs).content.strip()
+    except Exception:
+        # If rewrite fails, fall back to original question
+        return user_q
 
-# ── Helper: safe LLM invoke ───────────────────────────────────────────────────
-def safe_llm_invoke(prompt_template, model_name: str, fallback_text: str, **kwargs) -> str:
+# ── Helper: safe LLM invoke ────────────────────────────────────────────────────
+def safe_llm_invoke(prompt_template, fallback_text: str, **kwargs) -> str:
     chat_history = kwargs.get("chat_history", [])
 
-    # Use flat prompt if model has no system message support
-    # OR if chat history is empty (prevents empty MessagesPlaceholder error)
-    if model_name in NO_SYSTEM_MODELS or not chat_history:
+    # Use flat prompt when chat history is empty
+    # (prevents empty MessagesPlaceholder error)
+    if not chat_history:
         return llm.invoke([HumanMessage(content=fallback_text)]).content
     else:
         msgs = prompt_template.format_messages(**kwargs)
@@ -414,7 +459,6 @@ if user_q:
         )
         answer = safe_llm_invoke(
             llm_only_prompt,
-            selected_model,
             fallback,
             chat_history=history.messages,
             input=user_q,
@@ -427,7 +471,7 @@ if user_q:
     # ── MODE: RAG Only ─────────────────────────────────────────────────────────
     elif mode == "🗂️ RAG Only":
         standalone_q = rewrite_question(user_q, history, selected_model)
-        docs         = retriever.invoke(standalone_q)
+        docs         = smart_retrieve(retriever, standalone_q, user_q)
 
         if not docs:
             answer = "Out of scope — not found in provided documents."
@@ -446,7 +490,6 @@ if user_q:
         )
         answer = safe_llm_invoke(
             qa_prompt,
-            selected_model,
             fallback,
             chat_history=history.messages,
             input=user_q,
@@ -460,7 +503,7 @@ if user_q:
         with st.expander("🧪 Debug: Rewritten Query & Retrieval"):
             st.write("**Rewritten (standalone) query:**")
             st.code(standalone_q or "(empty)", language="text")
-            st.write(f"**Retrieved {len(docs)} chunk(s).**")
+            st.write(f"**Retrieved {len(docs)} unique chunk(s).**")
             st.write(f"**Model:** {selected_model}")
             st.write(f"**Style:** {tone} | {answer_length} | {language}")
 
@@ -472,7 +515,7 @@ if user_q:
     # ── MODE: RAG + LLM Hybrid ─────────────────────────────────────────────────
     elif mode == "🔀 RAG + LLM":
         standalone_q = rewrite_question(user_q, history, selected_model)
-        docs         = retriever.invoke(standalone_q)
+        docs         = smart_retrieve(retriever, standalone_q, user_q)
         context_str  = _join_docs(docs) if docs else "No relevant documents found."
 
         fallback = (
@@ -484,7 +527,6 @@ if user_q:
         )
         answer = safe_llm_invoke(
             hybrid_prompt,
-            selected_model,
             fallback,
             chat_history=history.messages,
             input=user_q,
@@ -498,7 +540,7 @@ if user_q:
         with st.expander("🧪 Debug: Rewritten Query & Retrieval"):
             st.write("**Rewritten (standalone) query:**")
             st.code(standalone_q or "(empty)", language="text")
-            st.write(f"**Retrieved {len(docs)} chunk(s).**")
+            st.write(f"**Retrieved {len(docs)} unique chunk(s).**")
             st.write(f"**Model:** {selected_model}")
 
         with st.expander("📑 Retrieved Chunks"):
