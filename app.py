@@ -12,11 +12,11 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
 
-# Page setup
+# ── Page setup ─────────────────────────────────────────────────────────────────
 st.set_page_config(page_title="🤖 RAG Chatbot", layout="wide")
 st.title("🔍 RAG Q&A with multiple PDFs + Chat History")
 
-# Sidebar
+# ── Sidebar ────────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.header("⚙ Controls")
     api_key_input = st.text_input("Groq Api Key", type="password")
@@ -103,14 +103,14 @@ with st.sidebar:
     else:
         st.caption("No feedback yet.")
 
-# API Key
+# ── API Key ────────────────────────────────────────────────────────────────────
 api_key = api_key_input or st.secrets.get("GROQ_API_KEY")
 
 if not api_key:
     st.warning("Enter your Groq API key to continue")
     st.stop()
 
-# Models (cached - created only once per unique combination)
+# ── Models (cached) ────────────────────────────────────────────────────────────
 @st.cache_resource
 def load_embeddings():
     return HuggingFaceEmbeddings(
@@ -128,17 +128,15 @@ def load_llm(api_key, model_name):
 embeddings = load_embeddings()
 llm        = load_llm(api_key, selected_model)
 
-# PDF Upload
+# ── PDF Upload ─────────────────────────────────────────────────────────────────
 uploaded_files = st.file_uploader(
     "📁 Upload PDF Files Here",
     type="pdf",
     accept_multiple_files=True
 )
 
-# If new files uploaded, save them to session state
 if uploaded_files:
     st.session_state["uploaded_files"] = uploaded_files
-# Fall back to previously saved files if uploader is empty
 elif "uploaded_files" in st.session_state:
     uploaded_files = st.session_state["uploaded_files"]
 
@@ -146,26 +144,24 @@ if not uploaded_files:
     st.info("Upload one or more PDFs to continue")
     st.stop()
 
-# Store files BEFORE calling build_retriever
 st.session_state["uploaded_files"] = uploaded_files
 
-# Helper: delete chroma index folder without shutil
+# ── Helper: delete chroma index without shutil ────────────────────────────────
 def delete_chroma_index(path: str):
     if not os.path.exists(path):
         return
-    # Walk bottom-up: delete files first, then empty dirs
     for root, dirs, files in os.walk(path, topdown=False):
         for file in files:
             fp = os.path.join(root, file)
             try:
-                os.chmod(fp, 0o777)   # ✅ force write permission before deleting
+                os.chmod(fp, 0o777)
                 os.remove(fp)
             except Exception:
                 pass
         for d in dirs:
             dp = os.path.join(root, d)
             try:
-                os.chmod(dp, 0o777)   # ✅ force write permission on dirs too
+                os.chmod(dp, 0o777)
                 os.rmdir(dp)
             except Exception:
                 pass
@@ -175,12 +171,11 @@ def delete_chroma_index(path: str):
     except Exception:
         pass
 
-# Build Retriever (cached - rebuilds only when files change)
+# ── Build Retriever ────────────────────────────────────────────────────────────
 @st.cache_resource(show_spinner="📄 Processing PDFs...")
 def build_retriever(file_keys: tuple, _embeddings):
+    # Unique index path per file set — never reuses stale index
     index_path = f"chroma_index_{abs(hash(file_keys))}"
-
-    # Delete any existing index at this path before rebuilding
     delete_chroma_index(index_path)
 
     all_docs  = []
@@ -213,9 +208,10 @@ def build_retriever(file_keys: tuple, _embeddings):
     vectorstore = Chroma.from_documents(
         splits,
         _embeddings,
-        persist_directory=index_path    
+        persist_directory=index_path
     )
 
+    # MMR: fetch 20 candidates, return best 5 diverse ones
     retriever = vectorstore.as_retriever(
         search_type="mmr",
         search_kwargs={"k": 5, "fetch_k": 20}
@@ -223,21 +219,13 @@ def build_retriever(file_keys: tuple, _embeddings):
 
     return retriever, len(all_docs), len(splits)
 
-    # MMR fetches 20 candidates then picks best 5 diverse ones
-    retriever = vectorstore.as_retriever(
-        search_type="mmr",
-        search_kwargs={"k": 5, "fetch_k": 20}
-    )
-
-    return retriever, len(all_docs), len(splits)
-
-file_keys = tuple((f.name, f.size) for f in uploaded_files)
+file_keys                            = tuple((f.name, f.size) for f in uploaded_files)
 retriever, total_pages, total_chunks = build_retriever(file_keys, embeddings)
 
 st.success(f"✅ Loaded {total_pages} pages | {total_chunks} chunks indexed")
 st.sidebar.write(f"🔎 Indexed {total_chunks} chunks for retrieval")
 
-# Helper: join docs
+# ── Helper: join docs ──────────────────────────────────────────────────────────
 def _join_docs(docs, max_chars=7000):
     chunks, total = [], 0
     for d in docs:
@@ -248,7 +236,7 @@ def _join_docs(docs, max_chars=7000):
         total += len(piece)
     return "\n\n---\n\n".join(chunks)
 
-# Helper: style instructions
+# ── Helper: style instructions ─────────────────────────────────────────────────
 def get_style_instructions(tone: str, length: str, language: str) -> str:
     tone_map = {
         "Formal":                    "Use formal, professional language. Be precise and structured.",
@@ -284,7 +272,7 @@ def get_style_instructions(tone: str, length: str, language: str) -> str:
         f"Language: {language_map[language]}"
     )
 
-# Helper: deduplicate retrieved docs
+# ── Helper: deduplicate retrieved docs ────────────────────────────────────────
 def deduplicate(docs: list) -> list:
     seen   = set()
     unique = []
@@ -295,7 +283,7 @@ def deduplicate(docs: list) -> list:
             unique.append(doc)
     return unique
 
-# Helper: smart retrieval (3 attempts + deduplication)
+# ── Helper: smart retrieval ────────────────────────────────────────────────────
 def smart_retrieve(retriever, standalone_q: str, user_q: str) -> list:
     try:
         # Attempt 1: rewritten query
@@ -321,12 +309,10 @@ def smart_retrieve(retriever, standalone_q: str, user_q: str) -> list:
         st.warning(f"⚠️ Retrieval error: {e}")
         return []
 
-# Helper: rewrite question
+# ── Helper: rewrite question ───────────────────────────────────────────────────
 def rewrite_question(user_q: str, history, model_name: str) -> str:
-    # No history = question is already standalone, skip rewrite
     if not history.messages:
         return user_q
-
     try:
         rewrite_msgs = contextualize_q_prompt.format_messages(
             chat_history=history.messages,
@@ -334,10 +320,9 @@ def rewrite_question(user_q: str, history, model_name: str) -> str:
         )
         return llm.invoke(rewrite_msgs).content.strip()
     except Exception:
-        # If rewrite fails, fall back to original question
         return user_q
 
-# Helper: safe LLM invoke 
+# ── Helper: safe LLM invoke ────────────────────────────────────────────────────
 def safe_llm_invoke(prompt_template, fallback_text: str, **kwargs) -> str:
     chat_history = kwargs.get("chat_history", [])
 
@@ -366,11 +351,11 @@ def safe_llm_invoke(prompt_template, fallback_text: str, **kwargs) -> str:
                 st.error("📏 Input too long. Try a shorter question.")
                 return "_(Input too long — please ask a shorter question.)_"
 
-        # Show full error so you can diagnose next time
+        # Show full error for diagnosis
         st.error(f"🚨 LLM error: {e}")
         return "_(An error occurred — please try again.)_"
 
-# Prompts
+# ── Prompts ────────────────────────────────────────────────────────────────────
 contextualize_q_prompt = ChatPromptTemplate.from_messages([
     ("system",
      "Rewrite the user's latest question into a standalone search query "
@@ -416,7 +401,7 @@ hybrid_prompt = ChatPromptTemplate.from_messages([
     ("human", "{input}")
 ])
 
-# Session State 
+# ── Session State ──────────────────────────────────────────────────────────────
 if "chat_histories" not in st.session_state:
     st.session_state.chat_histories = {}
 
@@ -428,10 +413,10 @@ def get_history(session_id: str):
         st.session_state.chat_histories[session_id] = ChatMessageHistory()
     return st.session_state.chat_histories[session_id]
 
-# Chat UI
+# ── Chat UI ────────────────────────────────────────────────────────────────────
 history = get_history(session_id)
 
-# Chat export
+# ── Chat export ────────────────────────────────────────────────────────────────
 def build_export_text(history, session_id: str) -> str:
     lines = [
         f"Chat Export — Session: {session_id}",
@@ -452,7 +437,7 @@ if history.messages:
         mime="text/plain"
     )
 
-# Render previous messages with feedback buttons
+# ── Render previous messages with feedback buttons ─────────────────────────────
 ai_msg_index = 0
 
 for msg in history.messages:
@@ -478,16 +463,16 @@ for msg in history.messages:
                 st.rerun()
         ai_msg_index += 1
 
-# Chat input
+# ── Chat input ─────────────────────────────────────────────────────────────────
 user_q = st.chat_input("Ask a question....")
 
-# Chat Pipeline
+# ── Chat Pipeline ──────────────────────────────────────────────────────────────
 if user_q:
     history            = get_history(session_id)
     style_instructions = get_style_instructions(tone, answer_length, language)
     st.chat_message("user").write(user_q)
 
-    # MODE: LLM Only
+    # ── MODE: LLM Only ─────────────────────────────────────────────────────────
     if mode == "🤖 LLM Only":
         fallback = (
             f"Answer this question using your own knowledge.\n"
@@ -505,7 +490,7 @@ if user_q:
         history.add_user_message(user_q)
         history.add_ai_message(answer)
 
-    # MODE: RAG Only 
+    # ── MODE: RAG Only ─────────────────────────────────────────────────────────
     elif mode == "🗂️ RAG Only":
         standalone_q = rewrite_question(user_q, history, selected_model)
         docs         = smart_retrieve(retriever, standalone_q, user_q)
@@ -549,7 +534,7 @@ if user_q:
                 st.markdown(f"**{i}. {doc.metadata.get('source_file','Unknown')} (p{doc.metadata.get('page','?')})**")
                 st.write(doc.page_content[:500] + ("..." if len(doc.page_content) > 500 else ""))
 
-    # MODE: RAG + LLM Hybrid
+    # ── MODE: RAG + LLM Hybrid ─────────────────────────────────────────────────
     elif mode == "🔀 RAG + LLM":
         standalone_q = rewrite_question(user_q, history, selected_model)
         docs         = smart_retrieve(retriever, standalone_q, user_q)
@@ -587,6 +572,3 @@ if user_q:
                     st.write(doc.page_content[:500] + ("..." if len(doc.page_content) > 500 else ""))
             else:
                 st.info("No chunks retrieved — AI answered from its own knowledge.")
-
-
-
