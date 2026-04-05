@@ -6,6 +6,7 @@ langchain-community
 langchain-text-splitters
 langchain-chroma==0.1.4
 
+protobuf==3.20.3
 chromadb==0.4.24
 numpy==1.26.4
 pypdf
